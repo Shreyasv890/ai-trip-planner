@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 
-const API = "https://ai-trip-backend-oxo5.onrender.com/api";
+const API = "http://localhost:5000/api";
 
 async function callGroq(prompt) {
   const res = await fetch(`${API}/auth/generate`, {
@@ -106,73 +106,67 @@ function estimateBudget(location, days, travelers, style) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// ✅ FIX: PlaceImage — Unsplash Source API is DEAD (shut down 2023)
-//    Now uses Picsum Photos (free, no API key, always works)
-//    Optional: set REACT_APP_UNSPLASH_KEY in .env for real travel photos
+// ✅ FIX: PlaceImage — full-width, properly sized, attractive images
+//    Uses Picsum Photos (free, reliable, no API key needed)
+//    Deterministic seed = same image per place, consistent UI
 // ═══════════════════════════════════════════════════════════════
-function PlaceImage({ query, height = 160 }) {
-  const [src, setSrc] = useState(() => {
-    // Try official Unsplash API if key provided
-    const key = process.env.REACT_APP_UNSPLASH_KEY;
-    if (key) {
-      return `https://api.unsplash.com/search/photos?query=${encodeURIComponent(query + ",travel")}&per_page=1&client_id=${key}`;
-    }
-    // Picsum with deterministic seed (consistent per place name)
-    const seed = (query || "travel").toLowerCase().replace(/[^a-z0-9]/g, "-").slice(0, 40);
-    return `https://picsum.photos/seed/${seed}/600/400`;
-  });
-  const [isUnsplashApi, setIsUnsplashApi] = useState(!!process.env.REACT_APP_UNSPLASH_KEY);
-  const [realSrc, setRealSrc] = useState(null);
-  const [err, setErr] = useState(false);
+function PlaceImage({ query, height = 200 }) {
   const [loaded, setLoaded] = useState(false);
+  const [err, setErr] = useState(false);
 
-  useEffect(() => {
-    if (isUnsplashApi && src.includes("api.unsplash.com")) {
-      fetch(src)
-        .then(r => r.json())
-        .then(data => {
-          const url = data.results?.[0]?.urls?.regular;
-          if (url) { setRealSrc(url); setIsUnsplashApi(false); }
-          else fallbackToPicsum();
-        })
-        .catch(fallbackToPicsum);
-    }
-  }, []);
+  // Generate a consistent numeric seed 0-999 from the query string
+  const seed = (query || "travel")
+    .split("")
+    .reduce((acc, ch) => acc + ch.charCodeAt(0), 0) % 1000;
 
-  function fallbackToPicsum() {
-    const seed = (query || "travel").toLowerCase().replace(/[^a-z0-9]/g, "-").slice(0, 40);
-    setRealSrc(`https://picsum.photos/seed/${seed}/600/400`);
-    setIsUnsplashApi(false);
-  }
+  // Use wide 800x400 format for sharp, full-width display
+  const imgSrc = `https://picsum.photos/seed/${seed}/800/400`;
 
-  const imgSrc = realSrc || (isUnsplashApi ? null : src);
-
-  if (err || (!imgSrc && !isUnsplashApi)) return null;
-  if (isUnsplashApi) {
-    return (
-      <div style={{ borderRadius: 12, overflow: "hidden", marginBottom: 10, background: "#f1f5f9", height }}>
-        <div style={{ width: "100%", height, background: "linear-gradient(135deg,#e2e8f0,#f1f5f9)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28 }}>🌍</div>
-      </div>
-    );
-  }
   return (
-    <div style={{ borderRadius: 12, overflow: "hidden", marginBottom: 10, background: "#f1f5f9" }}>
+    <div style={{
+      width: "100%",
+      height,
+      borderRadius: 14,
+      overflow: "hidden",
+      marginBottom: 12,
+      background: "linear-gradient(135deg,#e2e8f0,#cbd5e1)",
+      position: "relative",
+      flexShrink: 0,
+    }}>
+      {/* Skeleton shimmer while loading */}
+      {!loaded && !err && (
+        <div style={{
+          position: "absolute", inset: 0,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          flexDirection: "column", gap: 8,
+          background: "linear-gradient(135deg,#dde3ec,#c8d1df)",
+        }}>
+          <div style={{ fontSize: 36 }}>🏞️</div>
+          <div style={{ fontSize: 12, color: "#94a3b8", fontWeight: 600 }}>Loading image…</div>
+        </div>
+      )}
+      {err && (
+        <div style={{
+          position: "absolute", inset: 0,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          background: "linear-gradient(135deg,#e0e7ef,#c9d4e0)",
+          fontSize: 34,
+        }}>🌍</div>
+      )}
       <img
         src={imgSrc}
         alt={query}
         onLoad={() => setLoaded(true)}
-        onError={() => {
-          if (!err) {
-            const seed = (query || "travel").toLowerCase().replace(/[^a-z0-9]/g, "-").slice(0, 40);
-            setRealSrc(`https://picsum.photos/seed/${seed}-2/600/400`);
-            setErr(true);
-          }
+        onError={() => setErr(true)}
+        style={{
+          width: "100%",
+          height: "100%",
+          objectFit: "cover",
+          objectPosition: "center",
+          display: loaded ? "block" : "none",
+          transition: "opacity 0.4s ease",
         }}
-        style={{ width: "100%", height, objectFit: "cover", display: loaded ? "block" : "none", borderRadius: 12 }}
       />
-      {!loaded && (
-        <div style={{ width: "100%", height, background: "linear-gradient(135deg,#e2e8f0,#f1f5f9)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28 }}>🌍</div>
-      )}
     </div>
   );
 }
@@ -533,10 +527,22 @@ function ChatBot({ onClose, onGeneratePlan }) {
   const [loading, setLoading] = useState(false);
   const [listening, setListening] = useState(false);
   const [collecting, setCollecting] = useState(false);
-  const [tripData, setTripData] = useState({});
-  const [collectStep, setCollectStep] = useState(0);
   const messagesEndRef = useRef(null);
   const recognitionRef = useRef(null);
+
+  // ── FIX: use refs to avoid stale closure bug (chatbot repeating same question) ──
+  const collectStepRef = useRef(0);
+  const tripDataRef = useRef({});
+  const collectingRef = useRef(false);
+  // sync collecting state to ref
+  const setCollectingSync = (val) => { collectingRef.current = val; setCollecting(val); };
+
+  const [collectStep, setCollectStepState] = useState(0);
+  const setCollectStep = (val) => {
+    const n = typeof val === "function" ? val(collectStepRef.current) : val;
+    collectStepRef.current = n;
+    setCollectStepState(n);
+  };
 
   const collectSteps = [
     { key: "from", q: "📍 Where are you starting from? (city name)" },
@@ -583,19 +589,25 @@ function ChatBot({ onClose, onGeneratePlan }) {
     addMsg("user", userMsg);
     setLoading(true);
 
-    if (collecting) {
-      const step = collectSteps[collectStep];
-      const newData = { ...tripData, [step.key]: userMsg };
-      setTripData(newData);
-      if (collectStep < collectSteps.length - 1) {
-        const nextStep = collectSteps[collectStep + 1];
+    // ── FIX: read from refs (not stale state) so step always advances correctly ──
+    if (collectingRef.current) {
+      const currentStep = collectStepRef.current;
+      const step = collectSteps[currentStep];
+      const newData = { ...tripDataRef.current, [step.key]: userMsg };
+      tripDataRef.current = newData;
+
+      if (currentStep < collectSteps.length - 1) {
+        const nextStep = collectSteps[currentStep + 1];
+        setCollectStep(currentStep + 1);
         addMsg("assistant", `Got it! ✅\n\n${nextStep.q}`);
         speak(nextStep.q);
-        setCollectStep(s => s + 1);
       } else {
         addMsg("assistant", "🎉 Perfect! I have all the details. Generating your complete trip plan now...");
         speak("Perfect! Generating your complete trip plan now!");
-        setCollecting(false); setCollectStep(0); setLoading(false);
+        setCollectingSync(false);
+        setCollectStep(0);
+        tripDataRef.current = {};
+        setLoading(false);
         const interestIds = INTERESTS.filter(i =>
           (newData.interests || "").toLowerCase().includes(i.label.toLowerCase().split("&")[0].trim()) ||
           (newData.interests || "").toLowerCase().includes(i.id)
@@ -618,7 +630,10 @@ function ChatBot({ onClose, onGeneratePlan }) {
     const planKeywords = ["plan a trip", "plan trip", "book a trip", "create plan", "make itinerary", "generate plan", "plan my trip", "i want to travel", "want to go to", "help me plan"];
     const wantsPlan = planKeywords.some(kw => userMsg.toLowerCase().includes(kw));
     if (wantsPlan) {
-      setCollecting(true); setCollectStep(0); setTripData({});
+      collectStepRef.current = 0;
+      tripDataRef.current = {};
+      setCollectStep(0);
+      setCollectingSync(true);
       const reply = "🗺 Great! I'll help you plan your trip. Let me collect some details.\n\n" + collectSteps[0].q;
       addMsg("assistant", reply);
       speak("Great! I will help you plan your trip. " + collectSteps[0].q);
@@ -707,11 +722,21 @@ function VoiceAssistant({ onClose, onGeneratePlan }) {
   const [phase, setPhase] = useState("idle");
   const [transcript, setTranscript] = useState("");
   const [response, setResponse] = useState("");
-  const [collectStep, setCollectStep] = useState(0);
-  const [tripData, setTripData] = useState({});
   const [collecting, setCollecting] = useState(false);
   const [statusText, setStatusText] = useState("Tap the mic to start speaking");
   const recognitionRef = useRef(null);
+
+  // ── FIX: refs to avoid stale closures (caused "Step 8 of 7" bug) ──
+  const collectStepRef = useRef(0);
+  const tripDataRef = useRef({});
+  const collectingRef = useRef(false);
+  const [collectStep, setCollectStepState] = useState(0);
+  const setCollectStep = (val) => {
+    const n = typeof val === "function" ? val(collectStepRef.current) : val;
+    collectStepRef.current = n;
+    setCollectStepState(n);
+  };
+  const setCollectingSync = (val) => { collectingRef.current = val; setCollecting(val); };
 
   const collectSteps = [
     { key: "from", q: "Where are you starting from?" },
@@ -747,16 +772,19 @@ function VoiceAssistant({ onClose, onGeneratePlan }) {
   }
 
   async function handleVoiceInput(text) {
-    if (collecting) {
-      const step = collectSteps[collectStep];
-      const newData = { ...tripData, [step.key]: text };
-      setTripData(newData);
-      if (collectStep < collectSteps.length - 1) {
-        const next = collectSteps[collectStep + 1];
-        setCollectStep(s => s + 1);
+    if (collectingRef.current) {
+      const currentStep = collectStepRef.current;
+      const step = collectSteps[currentStep];
+      const newData = { ...tripDataRef.current, [step.key]: text };
+      tripDataRef.current = newData;
+      if (currentStep < collectSteps.length - 1) {
+        const next = collectSteps[currentStep + 1];
+        setCollectStep(currentStep + 1);
         speak(next.q, () => startListening(handleVoiceInput));
       } else {
-        setCollecting(false);
+        setCollectingSync(false);
+        setCollectStep(0);
+        tripDataRef.current = {};
         speak("Perfect! I have everything I need. Generating your complete trip plan now! Close this and check your plan.", () => {
           const interestIds = INTERESTS.filter(i =>
             (newData.interests || "").toLowerCase().includes(i.label.toLowerCase().split("&")[0].trim()) ||
@@ -779,7 +807,10 @@ function VoiceAssistant({ onClose, onGeneratePlan }) {
     }
     const planKw = ["plan", "trip", "travel", "go to", "visit", "book"];
     if (planKw.some(k => text.toLowerCase().includes(k))) {
-      setCollecting(true); setCollectStep(0); setTripData({});
+      collectStepRef.current = 0;
+      tripDataRef.current = {};
+      setCollectStep(0);
+      setCollectingSync(true);
       speak("Sure! Let me help you plan your trip. " + collectSteps[0].q, () => startListening(handleVoiceInput));
       return;
     }
@@ -1039,7 +1070,7 @@ function LiveTripNavigator({ result, onClose }) {
               const done = isDone(currentDay, j);
               return (
                 <div key={j} style={{ background: done ? "#0f2c1a" : "#1e293b", borderRadius: 16, padding: "16px", marginBottom: 12, border: `2px solid ${done ? "#22c55e" : "#334155"}`, transition: "all 0.3s" }}>
-                  <PlaceImage query={`${a.name} ${r.meta?.location}`} height={130} />
+                  <PlaceImage query={`${a.name} ${r.meta?.location}`} height={220} />
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 8 }}>
                     <div style={{ display: "flex", gap: 10, alignItems: "flex-start", flex: 1 }}>
                       <span style={{ fontSize: 24, flexShrink: 0 }}>{a.emoji || "📍"}</span>
@@ -1070,7 +1101,7 @@ function LiveTripNavigator({ result, onClose }) {
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                   {nearbyPlaces.map((p, k) => (
                     <div key={k} style={{ background: "#0f172a", borderRadius: 12, overflow: "hidden" }}>
-                      <PlaceImage query={`${p.name} ${r.meta?.location}`} height={90} />
+                      <PlaceImage query={`${p.name} ${r.meta?.location}`} height={130} />
                       <div style={{ padding: "10px" }}>
                         <div style={{ fontWeight: 700, fontSize: 13, color: "#fff" }}>{p.name}</div>
                         {p.type && <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>{p.type}</div>}
@@ -1287,22 +1318,41 @@ function AuthPage({ onLogin }) {
 
 // ── NAVBAR ─────────────────────────────────────────────────────
 function Navbar({ user, activePage, setPage, onLogout }) {
-  const menus = [{ id: "home", label: "🏠" }, { id: "planner", label: "✈️ Plan" }, { id: "weather", label: "🌤" }, { id: "map", label: "🗺" }, { id: "hotels", label: "🏨" }, { id: "profile", label: "👤" }, { id: "about", label: "ℹ️" }];
+  const menus = [
+    { id: "home", label: "🏠 Home" },
+    { id: "planner", label: "✈️ Plan Trip" },
+    { id: "weather", label: "🌤 Weather" },
+    { id: "map", label: "🗺 Map" },
+    { id: "hotels", label: "🏨 Hotels" },
+    { id: "profile", label: "👤 Profile" },
+    { id: "about", label: "ℹ️ About" },
+  ];
   return (
-    <div style={{ background: "#fff", borderBottom: "1px solid #e2e8f0", position: "sticky", top: 0, zIndex: 100 }}>
-      <div style={{ maxWidth: 1000, margin: "0 auto", padding: "0 16px", height: 54, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-          <div style={{ width: 28, height: 28, borderRadius: 8, background: "linear-gradient(135deg,#2563eb,#7c3aed)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14 }}>✈️</div>
-          <span style={{ fontWeight: 800, fontSize: 13, color: "#1e293b" }}>AI Trip Planner</span>
+    <div style={{ background: "#fff", borderBottom: "2px solid #e2e8f0", position: "sticky", top: 0, zIndex: 100, boxShadow: "0 2px 12px rgba(0,0,0,0.06)" }}>
+      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "0 16px", height: 64, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+        {/* Logo */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+          <div style={{ width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg,#2563eb,#7c3aed)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>✈️</div>
+          <span style={{ fontWeight: 800, fontSize: 15, color: "#1e293b", whiteSpace: "nowrap" }}>AI Trip Planner</span>
         </div>
-        <div style={{ display: "flex", gap: 2, alignItems: "center", overflowX: "auto" }}>
+        {/* Nav buttons */}
+        <div style={{ display: "flex", gap: 4, alignItems: "center", overflowX: "auto", flexShrink: 1 }}>
           {menus.map(m => (
-            <button key={m.id} onClick={() => setPage(m.id)} style={{ padding: "6px 10px", borderRadius: 8, border: "none", fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit", background: activePage === m.id ? "#eff6ff" : "none", color: activePage === m.id ? "#2563eb" : "#64748b", whiteSpace: "nowrap" }}>{m.label}</button>
+            <button key={m.id} onClick={() => setPage(m.id)} style={{
+              padding: "8px 14px", borderRadius: 10, border: "none",
+              fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit",
+              background: activePage === m.id ? "linear-gradient(135deg,#2563eb,#7c3aed)" : "#f1f5f9",
+              color: activePage === m.id ? "#fff" : "#475569",
+              whiteSpace: "nowrap", transition: "all 0.18s",
+              boxShadow: activePage === m.id ? "0 2px 8px rgba(37,99,235,0.25)" : "none",
+            }}>{m.label}</button>
           ))}
-          <div style={{ width: 1, height: 20, background: "#e2e8f0", margin: "0 4px" }} />
-          <div style={{ width: 26, height: 26, borderRadius: "50%", background: "linear-gradient(135deg,#2563eb,#7c3aed)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 800, fontSize: 11, flexShrink: 0 }}>{user.name[0].toUpperCase()}</div>
-          <span style={{ fontSize: 11, fontWeight: 700, color: "#1e293b", whiteSpace: "nowrap" }}>{user.name}</span>
-          <button onClick={onLogout} style={{ padding: "5px 9px", borderRadius: 7, border: "1.5px solid #e2e8f0", background: "#fff", fontWeight: 700, fontSize: 11, cursor: "pointer", color: "#64748b", fontFamily: "inherit" }}>Out</button>
+        </div>
+        {/* User area */}
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
+          <div style={{ width: 32, height: 32, borderRadius: "50%", background: "linear-gradient(135deg,#2563eb,#7c3aed)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 800, fontSize: 13 }}>{user.name[0].toUpperCase()}</div>
+          <span style={{ fontSize: 13, fontWeight: 700, color: "#1e293b", whiteSpace: "nowrap" }}>{user.name}</span>
+          <button onClick={onLogout} style={{ padding: "7px 14px", borderRadius: 9, border: "1.5px solid #e2e8f0", background: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", color: "#ef4444", fontFamily: "inherit" }}>Logout</button>
         </div>
       </div>
     </div>
@@ -1438,7 +1488,7 @@ function HotelsPage({ defaultCity = "" }) {
         const c = h.type === "Budget" ? "#059669" : h.type === "Luxury" ? "#d97706" : "#2563eb";
         return (
           <Card key={i}>
-            <PlaceImage query={`${h.name} ${city} hotel`} height={140} />
+            <PlaceImage query={`${h.name} ${city} hotel`} height={220} />
             <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
               <div style={{ flex: 1 }}>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 6 }}><span style={{ fontWeight: 800, color: "#1e293b", fontSize: 15 }}>🏨 {h.name}</span><Badge text={h.type} color={c} /></div>
@@ -1724,7 +1774,7 @@ function TripResult({ result: r, onBack, fromProfile = false, onStartTrip }) {
         {/* ITINERARY TAB */}
         {activeTab === "itinerary" && (
           <div>
-            <PlaceImage query={`${r.meta?.location} tourism`} height={180} />
+            <PlaceImage query={`${r.meta?.location} tourism`} height={260} />
             {r.meta?.interests?.length > 0 && (
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
                 {r.meta.interests.map(id => { const interest = INTERESTS.find(i => i.id === id); return interest ? <Badge key={id} text={`${interest.emoji} ${interest.label}`} color="#7c3aed" /> : null; })}
@@ -1747,7 +1797,7 @@ function TripResult({ result: r, onBack, fromProfile = false, onStartTrip }) {
                     </button>
                     {open && (
                       <div style={{ padding: "0 14px 14px" }}>
-                        <PlaceImage query={`${r.meta?.location} ${day.theme || ""}`} height={140} />
+                        <PlaceImage query={`${r.meta?.location} ${day.theme || ""}`} height={220} />
                         {day.meals && (
                           <div style={{ background: "#fff9f0", borderRadius: 12, padding: "12px", marginBottom: 12, border: "1px solid #fed7aa" }}>
                             <div style={{ fontWeight: 700, fontSize: 13, color: "#92400e", marginBottom: 8 }}>🍽 Meal Plan</div>
@@ -1761,7 +1811,7 @@ function TripResult({ result: r, onBack, fromProfile = false, onStartTrip }) {
                         )}
                         {day.activities?.map((a, j) => (
                           <div key={j} style={{ marginBottom: 14, paddingBottom: 14, borderBottom: j < day.activities.length - 1 ? "1px solid #f1f5f9" : "none" }}>
-                            <PlaceImage query={`${a.name} ${r.meta?.location}`} height={130} />
+                            <PlaceImage query={`${a.name} ${r.meta?.location}`} height={220} />
                             <div style={{ display: "flex", gap: 10 }}>
                               <div style={{ width: 28, height: 28, borderRadius: 8, background: `${accent}15`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, flexShrink: 0 }}>{a.emoji || "📍"}</div>
                               <div style={{ flex: 1 }}>
@@ -1785,7 +1835,7 @@ function TripResult({ result: r, onBack, fromProfile = false, onStartTrip }) {
                             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                               {day.nearby_places.map((p, k) => (
                                 <div key={k} style={{ background: "#f8fafc", borderRadius: 12, overflow: "hidden", border: "1px solid #e2e8f0" }}>
-                                  <PlaceImage query={`${p.name} ${r.meta?.location}`} height={80} />
+                                  <PlaceImage query={`${p.name} ${r.meta?.location}`} height={120} />
                                   <div style={{ padding: "8px 10px" }}>
                                     <div style={{ fontWeight: 700, fontSize: 12, color: "#1e293b" }}>{p.name}</div>
                                     {p.type && <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 1 }}>{p.type}</div>}
@@ -1881,7 +1931,7 @@ function TripResult({ result: r, onBack, fromProfile = false, onStartTrip }) {
           const c = h.type === "Budget" ? "#059669" : h.type === "Luxury" ? "#d97706" : "#2563eb";
           return (
             <Card key={i}>
-              <PlaceImage query={`${h.name} ${r.meta?.location} hotel`} height={130} />
+              <PlaceImage query={`${h.name} ${r.meta?.location} hotel`} height={220} />
               <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
                 <div style={{ flex: 1 }}>
                   <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 6 }}><span style={{ fontWeight: 800, color: "#1e293b", fontSize: 15 }}>🏨 {h.name}</span><Badge text={h.type} color={c} /></div>
