@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 
-const API = "https://ai-trip-backend-oxo5.onrender.com/api";
+const API = "http://localhost:5000/api";
 
 async function callGroq(prompt) {
   const res = await fetch(`${API}/auth/generate`, {
@@ -105,71 +105,131 @@ function estimateBudget(location, days, travelers, style) {
   return { hotel, food, transport, activities, misc, total: hotel + food + transport + activities + misc };
 }
 
-// ═══════════════════════════════════════════════════════════════
-// ✅ FIX: PlaceImage — full-width, properly sized, attractive images
-//    Uses Picsum Photos (free, reliable, no API key needed)
-//    Deterministic seed = same image per place, consistent UI
-// ═══════════════════════════════════════════════════════════════
+
+
+// ═══════════════════════════════════════════════════════════
+// ✅ PlaceImage — Pexels API (Free, real travel photos)
+//    Sign up at pexels.com/api → get free key instantly
+//    Add to .env: REACT_APP_PEXELS_KEY=your_key_here
+// ═══════════════════════════════════════════════════════════
+
+const _pexCache = {};
+
+function getEmoji(query) {
+  const q = (query || "").toLowerCase();
+  if (q.includes("beach") || q.includes("sea"))      return "🏖️";
+  if (q.includes("hotel") || q.includes("resort"))   return "🏨";
+  if (q.includes("temple") || q.includes("mandir"))  return "🛕";
+  if (q.includes("fort") || q.includes("palace"))    return "🏯";
+  if (q.includes("mountain") || q.includes("hill"))  return "⛰️";
+  if (q.includes("forest") || q.includes("jungle"))  return "🌿";
+  if (q.includes("waterfall") || q.includes("falls"))return "💧";
+  if (q.includes("lake") || q.includes("river"))     return "🌊";
+  if (q.includes("restaurant") || q.includes("cafe"))return "🍽️";
+  if (q.includes("museum") || q.includes("gallery")) return "🎨";
+  if (q.includes("market") || q.includes("shopping"))return "🛍️";
+  return "📍";
+}
+
 function PlaceImage({ query, height = 200 }) {
+  const [src, setSrc]       = useState(null);
   const [loaded, setLoaded] = useState(false);
-  const [err, setErr] = useState(false);
+  const [err, setErr]       = useState(false);
+  const emoji                = getEmoji(query);
+  const KEY                  = process.env.REACT_APP_PEXELS_KEY;
 
-  // Generate a consistent numeric seed 0-999 from the query string
-  const seed = (query || "travel")
-    .split("")
-    .reduce((acc, ch) => acc + ch.charCodeAt(0), 0) % 1000;
+  useEffect(() => {
+    if (!query || !KEY) return;
+    const k = query.toLowerCase().trim();
+    if (_pexCache[k]) { setSrc(_pexCache[k]); return; }
 
-  // Use wide 800x400 format for sharp, full-width display
-  const imgSrc = `https://picsum.photos/seed/${seed}/800/400`;
+    // Search Pexels for real travel photos matching the place name
+    fetch(`https://api.pexels.com/v1/search?query=${encodeURIComponent(k)}&per_page=1&orientation=landscape`, {
+      headers: { Authorization: KEY }
+    })
+      .then(r => r.json())
+      .then(data => {
+        const url = data?.photos?.[0]?.src?.large2x || data?.photos?.[0]?.src?.large;
+        if (url) { _pexCache[k] = url; setSrc(url); }
+        else setErr(true);
+      })
+      .catch(() => setErr(true));
+  }, [query, KEY]);
+
+  // No key configured — show emoji placeholder
+  if (!KEY) return (
+    <div style={{
+      width:"100%", height, borderRadius:14, marginBottom:12,
+      background:"linear-gradient(135deg,#e2e8f0,#cbd5e1)",
+      display:"flex", alignItems:"center", justifyContent:"center",
+      flexDirection:"column", gap:8,
+    }}>
+      <div style={{ fontSize:44 }}>{emoji}</div>
+      <div style={{ fontSize:11, color:"#94a3b8", fontWeight:600 }}>Add REACT_APP_PEXELS_KEY to .env</div>
+    </div>
+  );
 
   return (
     <div style={{
-      width: "100%",
-      height,
-      borderRadius: 14,
-      overflow: "hidden",
-      marginBottom: 12,
-      background: "linear-gradient(135deg,#e2e8f0,#cbd5e1)",
-      position: "relative",
-      flexShrink: 0,
+      width:"100%", height, borderRadius:14, overflow:"hidden",
+      marginBottom:12, position:"relative", flexShrink:0,
+      background:"linear-gradient(135deg,#dde3ec,#c8d1df)",
     }}>
-      {/* Skeleton shimmer while loading */}
+      {/* Skeleton */}
       {!loaded && !err && (
         <div style={{
-          position: "absolute", inset: 0,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          flexDirection: "column", gap: 8,
-          background: "linear-gradient(135deg,#dde3ec,#c8d1df)",
+          position:"absolute", inset:0, display:"flex",
+          alignItems:"center", justifyContent:"center", flexDirection:"column", gap:8,
         }}>
-          <div style={{ fontSize: 36 }}>🏞️</div>
-          <div style={{ fontSize: 12, color: "#94a3b8", fontWeight: 600 }}>Loading image…</div>
+          <div style={{ fontSize:44 }}>{emoji}</div>
+          <div style={{ fontSize:11, color:"#64748b", fontWeight:600 }}>Loading photo…</div>
         </div>
       )}
+      {/* Error */}
       {err && (
         <div style={{
-          position: "absolute", inset: 0,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          background: "linear-gradient(135deg,#e0e7ef,#c9d4e0)",
-          fontSize: 34,
-        }}>🌍</div>
+          position:"absolute", inset:0, display:"flex",
+          alignItems:"center", justifyContent:"center", flexDirection:"column", gap:8,
+          background:"linear-gradient(135deg,#e2e8f0,#cbd5e1)",
+        }}>
+          <div style={{ fontSize:48 }}>{emoji}</div>
+          <div style={{ fontSize:12, color:"#475569", fontWeight:700, textAlign:"center", padding:"0 16px" }}>
+            {(query||"").split(" ").slice(0,4).join(" ")}
+          </div>
+        </div>
       )}
-      <img
-        src={imgSrc}
-        alt={query}
-        onLoad={() => setLoaded(true)}
-        onError={() => setErr(true)}
-        style={{
-          width: "100%",
-          height: "100%",
-          objectFit: "cover",
-          objectPosition: "center",
-          display: loaded ? "block" : "none",
-          transition: "opacity 0.4s ease",
-        }}
-      />
+      {/* Real photo */}
+      {src && !err && (
+        <img
+          src={src} alt={query}
+          onLoad={() => setLoaded(true)}
+          onError={() => setErr(true)}
+          style={{
+            width:"100%", height:"100%",
+            objectFit:"cover", objectPosition:"center",
+            display: loaded ? "block" : "none",
+            transition:"opacity 0.4s ease",
+          }}
+        />
+      )}
+      {/* Label overlay */}
+      {loaded && (
+        <div style={{
+          position:"absolute", bottom:0, left:0, right:0,
+          background:"linear-gradient(transparent,rgba(0,0,0,0.65))",
+          padding:"24px 14px 10px",
+          display:"flex", alignItems:"center", gap:6,
+        }}>
+          <span style={{ fontSize:15 }}>{emoji}</span>
+          <span style={{ color:"#fff", fontSize:13, fontWeight:700, textShadow:"0 1px 6px rgba(0,0,0,0.9)" }}>
+            {(query||"").split(" ").slice(0,5).join(" ")}
+          </span>
+        </div>
+      )}
     </div>
   );
 }
+
 
 // ═══════════════════════════════════════════════════════════════
 // 🆕 FUTURE SCOPE 1: BUDGET TRACKER
