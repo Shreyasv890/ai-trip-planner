@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 
-const API = "https://ai-trip-planner-o77v.onrender.com/";
+const API = "https://ai-trip-backend-oxo5.onrender.com";
 
 async function callGroq(prompt) {
   const res = await fetch(`${API}/auth/generate`, {
