@@ -1225,7 +1225,7 @@ function LiveTripNavigator({ result, onClose }) {
               const done = isDone(currentDay, j);
               return (
                 <div key={j} style={{ background: done ? "#0f2c1a" : "#1e293b", borderRadius: 16, padding: "16px", marginBottom: 12, border: `2px solid ${done ? "#22c55e" : "#334155"}`, transition: "all 0.3s" }}>
-                  <PlaceImage query={`${a.name} ${r.meta?.location}`} height={220} dayIndex={i} actIndex={j} />
+                  <PlaceImage query={`${a.name} ${r.meta?.location}`} height={220} dayIndex={j} actIndex={j} />
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 8 }}>
                     <div style={{ display: "flex", gap: 10, alignItems: "flex-start", flex: 1 }}>
                       <span style={{ fontSize: 24, flexShrink: 0 }}>{a.emoji || "📍"}</span>
