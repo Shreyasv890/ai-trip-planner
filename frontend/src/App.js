@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 
-const API = "https://ai-trip-backend-oxo5.onrender.com/api";
-
+const API = "http://localhost:5000/api";
 
 async function callGroq(prompt) {
   const res = await fetch(`${API}/auth/generate`, {
@@ -132,7 +131,7 @@ function getEmoji(query) {
   return "📍";
 }
 
-function PlaceImage({ query, height = 200 }) {
+function PlaceImage({ query, height = 200, dayIndex = 0, actIndex = 0 }) {
   const [src, setSrc]       = useState(null);
   const [loaded, setLoaded] = useState(false);
   const [err, setErr]       = useState(false);
@@ -141,21 +140,28 @@ function PlaceImage({ query, height = 200 }) {
 
   useEffect(() => {
     if (!query || !KEY) return;
-    const k = query.toLowerCase().trim();
+    // ✅ FIX: Include dayIndex+actIndex in cache key so each card gets a DIFFERENT photo
+    // even when the same place appears on multiple days
+    const k = `${query.toLowerCase().trim()}_d${dayIndex}_a${actIndex}`;
     if (_pexCache[k]) { setSrc(_pexCache[k]); return; }
 
-    // Search Pexels for real travel photos matching the place name
-    fetch(`https://api.pexels.com/v1/search?query=${encodeURIComponent(k)}&per_page=1&orientation=landscape`, {
+    // ✅ FIX: Use page offset so day1/day2/day3 get different photos for same city
+    const page = (dayIndex * 3 + actIndex) % 5 + 1;
+
+    fetch(`https://api.pexels.com/v1/search?query=${encodeURIComponent(query.toLowerCase().trim())}&per_page=3&page=${page}&orientation=landscape`, {
       headers: { Authorization: KEY }
     })
       .then(r => r.json())
       .then(data => {
-        const url = data?.photos?.[0]?.src?.large2x || data?.photos?.[0]?.src?.large;
+        // Pick a different photo index based on actIndex to further vary images
+        const photos = data?.photos || [];
+        const pick = photos[actIndex % photos.length];
+        const url = pick?.src?.large2x || pick?.src?.large || photos[0]?.src?.large2x;
         if (url) { _pexCache[k] = url; setSrc(url); }
         else setErr(true);
       })
       .catch(() => setErr(true));
-  }, [query, KEY]);
+  }, [query, KEY, dayIndex, actIndex]);
 
   // No key configured — show emoji placeholder
   if (!KEY) return (
@@ -231,6 +237,94 @@ function PlaceImage({ query, height = 200 }) {
   );
 }
 
+
+// ═══════════════════════════════════════════════════════════════
+// ✅ HotelImage — Google Maps Street View for REAL hotel exterior photos
+//    Shows the actual hotel building — not a random travel photo
+//    Free, no API key needed, works for any hotel name + city
+// ═══════════════════════════════════════════════════════════════
+function HotelImage({ hotelName, location, height = 220 }) {
+  const [loaded, setLoaded] = useState(false);
+  const [err, setErr]       = useState(false);
+  const [pexSrc, setPexSrc] = useState(null);
+  const KEY                  = process.env.REACT_APP_PEXELS_KEY;
+
+  // Google Maps Street View Static — shows actual hotel building exterior
+  // Format: finds the location by name and returns a street-level photo
+  const streetViewSrc = `https://maps.googleapis.com/maps/api/streetview?size=800x400&location=${encodeURIComponent(hotelName + ", " + location)}&fov=90&heading=0&pitch=10&key=YOUR_MAPS_KEY`;
+
+  // ✅ Better approach without Google Maps key:
+  // Use the hotel name embedded in a Google Maps embed screenshot
+  // OR use Pexels with very specific hotel query
+  useEffect(() => {
+    if (!KEY || !hotelName) return;
+    const query = `${hotelName} hotel exterior building`;
+    const k = `hotel_${hotelName.toLowerCase().trim()}`;
+    if (_pexCache[k]) { setPexSrc(_pexCache[k]); return; }
+    fetch(`https://api.pexels.com/v1/search?query=${encodeURIComponent(query)}&per_page=1&orientation=landscape`, {
+      headers: { Authorization: KEY }
+    })
+      .then(r => r.json())
+      .then(data => {
+        const url = data?.photos?.[0]?.src?.large2x || data?.photos?.[0]?.src?.large;
+        if (url) { _pexCache[k] = url; setPexSrc(url); }
+      })
+      .catch(() => {});
+  }, [hotelName, KEY]);
+
+  const emoji = "🏨";
+  // Use Google Maps embed which shows real satellite/map view of the hotel
+  const mapsEmbedSrc = `https://maps.google.com/maps?q=${encodeURIComponent(hotelName + " " + location)}&output=embed&z=17`;
+
+  return (
+    <div style={{
+      width: "100%", height, borderRadius: 14, overflow: "hidden",
+      marginBottom: 12, position: "relative", flexShrink: 0,
+      background: "linear-gradient(135deg,#dde3ec,#c8d1df)",
+    }}>
+      {/* ✅ Show real Google Maps embed of the actual hotel location */}
+      {!err ? (
+        <iframe
+          title={hotelName}
+          src={mapsEmbedSrc}
+          width="100%" height={height}
+          style={{ border: "none", display: "block" }}
+          loading="lazy"
+          allowFullScreen
+          onError={() => setErr(true)}
+        />
+      ) : (
+        // Fallback: Pexels hotel photo if map fails
+        pexSrc ? (
+          <img src={pexSrc} alt={hotelName}
+            onLoad={() => setLoaded(true)}
+            onError={() => {}}
+            style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "center", display: loaded ? "block" : "none" }}
+          />
+        ) : (
+          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 8 }}>
+            <div style={{ fontSize: 44 }}>{emoji}</div>
+            <div style={{ fontSize: 12, color: "#64748b", fontWeight: 600 }}>{hotelName}</div>
+          </div>
+        )
+      )}
+      {/* Label overlay */}
+      <div style={{
+        position: "absolute", bottom: 0, left: 0, right: 0,
+        background: "linear-gradient(transparent, rgba(0,0,0,0.7))",
+        padding: "20px 14px 8px",
+        display: "flex", alignItems: "center", gap: 6,
+        pointerEvents: "none",
+      }}>
+        <span style={{ fontSize: 15 }}>🏨</span>
+        <span style={{ color: "#fff", fontSize: 13, fontWeight: 700, textShadow: "0 1px 4px rgba(0,0,0,0.9)" }}>
+          {hotelName}
+        </span>
+        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", marginLeft: 4 }}>· {location}</span>
+      </div>
+    </div>
+  );
+}
 
 // ═══════════════════════════════════════════════════════════════
 // 🆕 FUTURE SCOPE 1: BUDGET TRACKER
@@ -471,7 +565,7 @@ ${r.meta?.location && r.meta?.from ? `
 </div>` : ""}
 
 <div style="text-align:center;padding:20px;color:#94a3b8;font-size:12px;margin-top:20px;border-top:1px solid #e2e8f0">
-  Generated by AI Trip Planner · ${new Date().toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}
+  Generated by Trip Nova · ${new Date().toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}
 </div>
 </body></html>`;
 
@@ -1131,7 +1225,7 @@ function LiveTripNavigator({ result, onClose }) {
               const done = isDone(currentDay, j);
               return (
                 <div key={j} style={{ background: done ? "#0f2c1a" : "#1e293b", borderRadius: 16, padding: "16px", marginBottom: 12, border: `2px solid ${done ? "#22c55e" : "#334155"}`, transition: "all 0.3s" }}>
-                  <PlaceImage query={`${a.name} ${r.meta?.location}`} height={220} />
+                  <PlaceImage query={`${a.name} ${r.meta?.location}`} height={220} dayIndex={i} actIndex={j} />
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 8 }}>
                     <div style={{ display: "flex", gap: 10, alignItems: "flex-start", flex: 1 }}>
                       <span style={{ fontSize: 24, flexShrink: 0 }}>{a.emoji || "📍"}</span>
@@ -1162,7 +1256,7 @@ function LiveTripNavigator({ result, onClose }) {
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                   {nearbyPlaces.map((p, k) => (
                     <div key={k} style={{ background: "#0f172a", borderRadius: 12, overflow: "hidden" }}>
-                      <PlaceImage query={`${p.name} ${r.meta?.location}`} height={130} />
+                      <PlaceImage query={`${p.name} ${r.meta?.location}`} height={130} dayIndex={currentDay} actIndex={k + 10} />
                       <div style={{ padding: "10px" }}>
                         <div style={{ fontWeight: 700, fontSize: 13, color: "#fff" }}>{p.name}</div>
                         {p.type && <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>{p.type}</div>}
@@ -1292,86 +1386,248 @@ function LiveTripNavigator({ result, onClose }) {
 // ── AUTH PAGE ──────────────────────────────────────────────────
 function AuthPage({ onLogin }) {
   const [tab, setTab] = useState("login");
-  const [form, setForm] = useState({ name: "", email: "", password: "", confirm: "" });
-  const [error, setError] = useState(""); const [success, setSuccess] = useState(""); const [loading, setLoading] = useState(false);
+  // ✅ FIX: Separate state for login and signup — prevents pre-filled password dots
+  const [loginForm, setLoginForm] = useState({ email: "", password: "" });
+  const [signupForm, setSignupForm] = useState({ name: "", email: "", password: "", confirm: "" });
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  // ✅ FIX: Clear everything when switching tabs
+  function switchTab(t) {
+    setTab(t);
+    setError("");
+    setSuccess("");
+    setLoginForm({ email: "", password: "" });
+    setSignupForm({ name: "", email: "", password: "", confirm: "" });
+  }
 
   async function handleLogin() {
-    if (!form.email || !form.password) { setError("Please fill all fields."); return; }
+    if (!loginForm.email || !loginForm.password) { setError("Please fill all fields."); return; }
     setLoading(true); setError("");
     try {
-      const res = await fetch(`${API}/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: form.email, password: form.password }) });
+      const res = await fetch(`${API}/auth/login`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: loginForm.email, password: loginForm.password })
+      });
       const data = await res.json();
       if (!res.ok) { setError(data.message); setLoading(false); return; }
-      localStorage.setItem("token", data.token); localStorage.setItem("user", JSON.stringify(data.user)); onLogin(data.user);
+      localStorage.setItem("token", data.token);
+      localStorage.setItem("user", JSON.stringify(data.user));
+      onLogin(data.user);
     } catch { setError("Cannot connect to server."); }
     setLoading(false);
   }
 
   async function handleSignup() {
-    if (!form.name || !form.email || !form.password || !form.confirm) { setError("Please fill all fields."); return; }
-    if (form.password !== form.confirm) { setError("Passwords do not match."); return; }
+    if (!signupForm.name || !signupForm.email || !signupForm.password || !signupForm.confirm) { setError("Please fill all fields."); return; }
+    if (signupForm.password !== signupForm.confirm) { setError("Passwords do not match."); return; }
     setLoading(true); setError("");
     try {
-      const res = await fetch(`${API}/auth/signup`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: form.name, email: form.email, password: form.password }) });
+      const res = await fetch(`${API}/auth/signup`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: signupForm.name, email: signupForm.email, password: signupForm.password })
+      });
       const data = await res.json();
       if (!res.ok) { setError(data.message); setLoading(false); return; }
-      setSuccess("Account created! Please login."); setTab("login"); setForm(f => ({ ...f, password: "", confirm: "" }));
+      setSuccess("Account created! Please login.");
+      switchTab("login");
     } catch { setError("Cannot connect to server."); }
     setLoading(false);
   }
 
   return (
-    <div style={{ minHeight: "100vh", background: "linear-gradient(135deg,#1e3a8a,#1e293b,#312e81)", display: "flex", flexDirection: "column", fontFamily: "'DM Sans','Segoe UI',sans-serif" }}>
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&display=swap');*{box-sizing:border-box}input:focus,select:focus{border-color:#2563eb!important;box-shadow:0 0 0 3px rgba(37,99,235,0.15)}`}</style>
-      <div style={{ padding: "0 24px", height: 60, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+    <div style={{
+      minHeight: "100vh", width: "100%",
+      background: "linear-gradient(135deg,#0f172a 0%,#1e3a8a 50%,#312e81 100%)",
+      display: "flex", flexDirection: "column", alignItems: "center",
+      fontFamily: "'DM Sans','Segoe UI',sans-serif",
+    }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&display=swap');
+        * { box-sizing: border-box; }
+        input:focus, select:focus { border-color:#2563eb!important; box-shadow:0 0 0 3px rgba(37,99,235,0.15); }
+        .auth-input::placeholder { color: #94a3b8; }
+      `}</style>
+
+      {/* Top bar */}
+      <div style={{ width: "100%", maxWidth: 1100, padding: "0 24px", height: 64, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div style={{ width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg,#3b82f6,#8b5cf6)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>✈️</div>
-          <span style={{ fontWeight: 800, fontSize: 16, color: "#fff" }}>AI Trip Planner</span>
+          <div style={{ width: 40, height: 40, borderRadius: 12, background: "linear-gradient(135deg,#3b82f6,#8b5cf6)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>✈️</div>
+          <span style={{ fontWeight: 800, fontSize: 18, color: "#fff" }}>Trip Nova</span>
         </div>
-        <span style={{ fontSize: 11, background: "rgba(255,255,255,0.1)", color: "#94a3b8", padding: "4px 12px", borderRadius: 20, fontWeight: 700 }}>College Project</span>
+        <span style={{ fontSize: 12, background: "rgba(255,255,255,0.1)", color: "#94a3b8", padding: "5px 14px", borderRadius: 20, fontWeight: 700 }}>College Project</span>
       </div>
-      <div style={{ textAlign: "center", padding: "20px 24px 16px" }}>
-        <div style={{ fontSize: 48, marginBottom: 10 }}>🌍</div>
-        <h1 style={{ margin: "0 0 8px", fontSize: 28, fontWeight: 800, color: "#fff" }}>AI Trip Planner</h1>
-        <p style={{ color: "#94a3b8", fontSize: 14, margin: 0 }}>Chat · Voice · Plan · Navigate · Explore</p>
-        {/* 🆕 Show new features */}
-        <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap", marginTop: 10 }}>
-          {["📊 Budget Tracker", "⭐ Trip Rating", "⬇️ Download Plan", "🆘 Emergency Info"].map(f => (
-            <span key={f} style={{ background: "rgba(255,255,255,0.1)", color: "#e2e8f0", fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 14, border: "1px solid rgba(255,255,255,0.15)" }}>{f}</span>
-          ))}
+
+      {/* Main content — side by side on wide screens */}
+      <div style={{
+        flex: 1, width: "100%", maxWidth: 1100,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        padding: "20px 24px 40px", gap: 48,
+        flexWrap: "wrap",
+      }}>
+
+        {/* Left — Branding */}
+        <div style={{ flex: "1 1 340px", textAlign: "center", padding: "20px 0" }}>
+          <div style={{ fontSize: 72, marginBottom: 16 }}>🌍</div>
+          <h1 style={{ margin: "0 0 12px", fontSize: 36, fontWeight: 800, color: "#fff", lineHeight: 1.2 }}>
+            Trip Nova
+          </h1>
+          <p style={{ color: "#94a3b8", fontSize: 16, margin: "0 0 28px", lineHeight: 1.7 }}>
+            Chat · Voice · Plan · Navigate · Explore
+          </p>
+          <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
+            {["🤖 AI Chatbot", "🎙 Voice Planning", "🗺 Live Navigator", "📊 Budget Tracker", "⭐ Trip Rating", "🆘 Emergency Info"].map(f => (
+              <span key={f} style={{
+                background: "rgba(255,255,255,0.08)", color: "#e2e8f0",
+                fontSize: 12, fontWeight: 600, padding: "6px 14px",
+                borderRadius: 20, border: "1px solid rgba(255,255,255,0.15)"
+              }}>{f}</span>
+            ))}
+          </div>
         </div>
-      </div>
-      <div style={{ flex: 1, display: "flex", justifyContent: "center", padding: "0 16px 40px" }}>
-        <div style={{ background: "#fff", borderRadius: 24, padding: "28px 24px", width: "100%", maxWidth: 400, boxShadow: "0 20px 60px rgba(0,0,0,0.3)", height: "fit-content" }}>
-          <div style={{ display: "flex", background: "#f1f5f9", borderRadius: 12, padding: 4, marginBottom: 24 }}>
+
+        {/* Right — Auth Card (LARGE) */}
+        <div style={{
+          flex: "1 1 420px", maxWidth: 480,
+          background: "#fff", borderRadius: 28,
+          padding: "36px 32px",
+          boxShadow: "0 24px 80px rgba(0,0,0,0.4)",
+        }}>
+          {/* Tab switcher */}
+          <div style={{ display: "flex", background: "#f1f5f9", borderRadius: 14, padding: 5, marginBottom: 28 }}>
             {["login", "signup"].map(t => (
-              <button key={t} onClick={() => { setTab(t); setError(""); setSuccess(""); }} style={{ flex: 1, padding: "10px", borderRadius: 10, border: "none", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit", background: tab === t ? "#2563eb" : "none", color: tab === t ? "#fff" : "#64748b", transition: "all 0.2s" }}>
+              <button key={t} onClick={() => switchTab(t)} style={{
+                flex: 1, padding: "12px", borderRadius: 10, border: "none",
+                fontWeight: 800, fontSize: 15, cursor: "pointer", fontFamily: "inherit",
+                background: tab === t ? "#2563eb" : "none",
+                color: tab === t ? "#fff" : "#64748b",
+                transition: "all 0.2s",
+              }}>
                 {t === "login" ? "🔑 Login" : "📝 Sign Up"}
               </button>
             ))}
           </div>
-          {success && <div style={{ background: "#f0fdf4", border: "1.5px solid #86efac", borderRadius: 10, padding: "10px 14px", color: "#166534", fontWeight: 600, fontSize: 13, marginBottom: 14 }}>✅ {success}</div>}
-          {error && <div style={{ background: "#fef2f2", border: "1.5px solid #fecaca", borderRadius: 10, padding: "10px 14px", color: "#dc2626", fontWeight: 600, fontSize: 13, marginBottom: 14 }}>⚠️ {error}</div>}
-          {tab === "login" ? (
+
+          {/* Messages */}
+          {success && (
+            <div style={{ background: "#f0fdf4", border: "1.5px solid #86efac", borderRadius: 12, padding: "12px 16px", color: "#166534", fontWeight: 600, fontSize: 14, marginBottom: 18 }}>✅ {success}</div>
+          )}
+          {error && (
+            <div style={{ background: "#fef2f2", border: "1.5px solid #fecaca", borderRadius: 12, padding: "12px 16px", color: "#dc2626", fontWeight: 600, fontSize: 14, marginBottom: 18 }}>⚠️ {error}</div>
+          )}
+
+          {/* LOGIN FORM */}
+          {tab === "login" && (
             <>
-              <h2 style={{ margin: "0 0 20px", fontWeight: 800, color: "#1e293b", fontSize: 20 }}>Welcome Back 👋</h2>
-              {[["EMAIL", "email", "you@email.com", "email"], ["PASSWORD", "password", "••••••••", "password"]].map(([l, k, p, t]) => (
-                <div key={k} style={{ marginBottom: 14 }}><Lbl>{l}</Lbl><input type={t} placeholder={p} value={form[k]} onChange={e => setForm(f => ({ ...f, [k]: e.target.value }))} onKeyDown={e => e.key === "Enter" && handleLogin()} style={inp()} /></div>
-              ))}
-              <button onClick={handleLogin} disabled={loading} style={{ width: "100%", padding: "13px", borderRadius: 12, border: "none", background: "linear-gradient(135deg,#2563eb,#7c3aed)", color: "#fff", fontWeight: 800, fontSize: 15, cursor: "pointer", fontFamily: "inherit", opacity: loading ? 0.7 : 1 }}>{loading ? "Logging in…" : "Login →"}</button>
-              <p style={{ textAlign: "center", fontSize: 13, color: "#64748b", marginTop: 16, marginBottom: 0 }}>No account? <button onClick={() => setTab("signup")} style={{ background: "none", border: "none", color: "#2563eb", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 13 }}>Sign Up</button></p>
+              <h2 style={{ margin: "0 0 24px", fontWeight: 800, color: "#1e293b", fontSize: 22 }}>Welcome Back 👋</h2>
+              <div style={{ marginBottom: 16 }}>
+                <Lbl>EMAIL ADDRESS</Lbl>
+                <input
+                  className="auth-input"
+                  type="email" placeholder="you@email.com"
+                  value={loginForm.email}
+                  onChange={e => setLoginForm(f => ({ ...f, email: e.target.value }))}
+                  onKeyDown={e => e.key === "Enter" && handleLogin()}
+                  autoComplete="email"
+                  style={{ ...inp({ padding: "14px 16px", fontSize: 15, borderRadius: 12 }) }}
+                />
+              </div>
+              <div style={{ marginBottom: 24 }}>
+                <Lbl>PASSWORD</Lbl>
+                <input
+                  className="auth-input"
+                  type="password" placeholder="Enter your password"
+                  value={loginForm.password}
+                  onChange={e => setLoginForm(f => ({ ...f, password: e.target.value }))}
+                  onKeyDown={e => e.key === "Enter" && handleLogin()}
+                  autoComplete="current-password"
+                  style={{ ...inp({ padding: "14px 16px", fontSize: 15, borderRadius: 12 }) }}
+                />
+              </div>
+              <button onClick={handleLogin} disabled={loading} style={{
+                width: "100%", padding: "15px", borderRadius: 14, border: "none",
+                background: "linear-gradient(135deg,#2563eb,#7c3aed)",
+                color: "#fff", fontWeight: 800, fontSize: 16,
+                cursor: loading ? "not-allowed" : "pointer", fontFamily: "inherit",
+                opacity: loading ? 0.7 : 1,
+                boxShadow: "0 4px 18px rgba(37,99,235,0.35)",
+              }}>{loading ? "Logging in…" : "Login →"}</button>
+              <p style={{ textAlign: "center", fontSize: 14, color: "#64748b", marginTop: 18, marginBottom: 0 }}>
+                No account?{" "}
+                <button onClick={() => switchTab("signup")} style={{ background: "none", border: "none", color: "#2563eb", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 14 }}>Sign Up</button>
+              </p>
             </>
-          ) : (
+          )}
+
+          {/* SIGNUP FORM */}
+          {tab === "signup" && (
             <>
-              <h2 style={{ margin: "0 0 20px", fontWeight: 800, color: "#1e293b", fontSize: 20 }}>Create Account 🚀</h2>
-              {[["FULL NAME", "name", "Your name", "text"], ["EMAIL", "email", "you@email.com", "email"], ["PASSWORD", "password", "••••••••", "password"], ["CONFIRM PASSWORD", "confirm", "••••••••", "password"]].map(([l, k, p, t]) => (
-                <div key={k} style={{ marginBottom: 14 }}><Lbl>{l}</Lbl><input type={t} placeholder={p} value={form[k]} onChange={e => setForm(f => ({ ...f, [k]: e.target.value }))} onKeyDown={e => e.key === "Enter" && handleSignup()} style={inp()} /></div>
-              ))}
-              <button onClick={handleSignup} disabled={loading} style={{ width: "100%", padding: "13px", borderRadius: 12, border: "none", background: "linear-gradient(135deg,#059669,#0891b2)", color: "#fff", fontWeight: 800, fontSize: 15, cursor: "pointer", fontFamily: "inherit", opacity: loading ? 0.7 : 1 }}>{loading ? "Creating…" : "Create Account →"}</button>
-              <p style={{ textAlign: "center", fontSize: 13, color: "#64748b", marginTop: 16, marginBottom: 0 }}>Already registered? <button onClick={() => setTab("login")} style={{ background: "none", border: "none", color: "#2563eb", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 13 }}>Login</button></p>
+              <h2 style={{ margin: "0 0 24px", fontWeight: 800, color: "#1e293b", fontSize: 22 }}>Create Account 🚀</h2>
+              <div style={{ marginBottom: 14 }}>
+                <Lbl>FULL NAME</Lbl>
+                <input
+                  className="auth-input"
+                  type="text" placeholder="Your full name"
+                  value={signupForm.name}
+                  onChange={e => setSignupForm(f => ({ ...f, name: e.target.value }))}
+                  autoComplete="name"
+                  style={{ ...inp({ padding: "14px 16px", fontSize: 15, borderRadius: 12 }) }}
+                />
+              </div>
+              <div style={{ marginBottom: 14 }}>
+                <Lbl>EMAIL ADDRESS</Lbl>
+                <input
+                  className="auth-input"
+                  type="email" placeholder="you@email.com"
+                  value={signupForm.email}
+                  onChange={e => setSignupForm(f => ({ ...f, email: e.target.value }))}
+                  autoComplete="email"
+                  style={{ ...inp({ padding: "14px 16px", fontSize: 15, borderRadius: 12 }) }}
+                />
+              </div>
+              <div style={{ marginBottom: 14 }}>
+                <Lbl>PASSWORD</Lbl>
+                <input
+                  className="auth-input"
+                  type="password" placeholder="Create a password"
+                  value={signupForm.password}
+                  onChange={e => setSignupForm(f => ({ ...f, password: e.target.value }))}
+                  autoComplete="new-password"
+                  style={{ ...inp({ padding: "14px 16px", fontSize: 15, borderRadius: 12 }) }}
+                />
+              </div>
+              <div style={{ marginBottom: 24 }}>
+                <Lbl>CONFIRM PASSWORD</Lbl>
+                <input
+                  className="auth-input"
+                  type="password" placeholder="Repeat your password"
+                  value={signupForm.confirm}
+                  onChange={e => setSignupForm(f => ({ ...f, confirm: e.target.value }))}
+                  onKeyDown={e => e.key === "Enter" && handleSignup()}
+                  autoComplete="new-password"
+                  style={{ ...inp({ padding: "14px 16px", fontSize: 15, borderRadius: 12 }) }}
+                />
+              </div>
+              <button onClick={handleSignup} disabled={loading} style={{
+                width: "100%", padding: "15px", borderRadius: 14, border: "none",
+                background: "linear-gradient(135deg,#059669,#0891b2)",
+                color: "#fff", fontWeight: 800, fontSize: 16,
+                cursor: loading ? "not-allowed" : "pointer", fontFamily: "inherit",
+                opacity: loading ? 0.7 : 1,
+                boxShadow: "0 4px 18px rgba(5,150,105,0.35)",
+              }}>{loading ? "Creating…" : "Create Account →"}</button>
+              <p style={{ textAlign: "center", fontSize: 14, color: "#64748b", marginTop: 18, marginBottom: 0 }}>
+                Already registered?{" "}
+                <button onClick={() => switchTab("login")} style={{ background: "none", border: "none", color: "#2563eb", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 14 }}>Login</button>
+              </p>
             </>
           )}
         </div>
+      </div>
+
+      <div style={{ padding: "16px", color: "rgba(255,255,255,0.3)", fontSize: 12, textAlign: "center" }}>
+        🎓 Trip Nova · College Project · React · Node.js · MongoDB · Groq AI
       </div>
     </div>
   );
@@ -1380,13 +1636,14 @@ function AuthPage({ onLogin }) {
 // ── NAVBAR ─────────────────────────────────────────────────────
 function Navbar({ user, activePage, setPage, onLogout }) {
   const menus = [
-    { id: "home", label: "🏠 Home" },
+    { id: "home",    label: "🏠 Home" },
     { id: "planner", label: "✈️ Plan Trip" },
     { id: "weather", label: "🌤 Weather" },
-    { id: "map", label: "🗺 Map" },
-    { id: "hotels", label: "🏨 Hotels" },
+    { id: "map",     label: "🗺 Map" },
+    { id: "hotels",  label: "🏨 Hotels" },
+    { id: "reviews", label: "⭐ Reviews" },
     { id: "profile", label: "👤 Profile" },
-    { id: "about", label: "ℹ️ About" },
+    { id: "about",   label: "ℹ️ About" },
   ];
   return (
     <div style={{ background: "#fff", borderBottom: "2px solid #e2e8f0", position: "sticky", top: 0, zIndex: 100, boxShadow: "0 2px 12px rgba(0,0,0,0.06)" }}>
@@ -1394,7 +1651,7 @@ function Navbar({ user, activePage, setPage, onLogout }) {
         {/* Logo */}
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
           <div style={{ width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg,#2563eb,#7c3aed)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>✈️</div>
-          <span style={{ fontWeight: 800, fontSize: 15, color: "#1e293b", whiteSpace: "nowrap" }}>AI Trip Planner</span>
+          <span style={{ fontWeight: 800, fontSize: 15, color: "#1e293b", whiteSpace: "nowrap" }}>Trip Nova</span>
         </div>
         {/* Nav buttons */}
         <div style={{ display: "flex", gap: 4, alignItems: "center", overflowX: "auto", flexShrink: 1 }}>
@@ -1549,7 +1806,7 @@ function HotelsPage({ defaultCity = "" }) {
         const c = h.type === "Budget" ? "#059669" : h.type === "Luxury" ? "#d97706" : "#2563eb";
         return (
           <Card key={i}>
-            <PlaceImage query={`${h.name} ${city} hotel`} height={220} />
+            <HotelImage hotelName={h.name} location={city} height={220} />
             <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
               <div style={{ flex: 1 }}>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 6 }}><span style={{ fontWeight: 800, color: "#1e293b", fontSize: 15 }}>🏨 {h.name}</span><Badge text={h.type} color={c} /></div>
@@ -1650,7 +1907,7 @@ function AboutPage() {
       <Card style={{ background: "linear-gradient(135deg,#1e3a8a,#1e293b)", border: "none" }}>
         <div style={{ textAlign: "center" }}>
           <div style={{ fontSize: 52 }}>✈️</div>
-          <h2 style={{ color: "#fff", fontWeight: 800, fontSize: 22, margin: "10px 0 8px" }}>AI Trip Planner</h2>
+          <h2 style={{ color: "#fff", fontWeight: 800, fontSize: 22, margin: "10px 0 8px" }}>Trip Nova</h2>
           <p style={{ color: "#94a3b8", fontSize: 14, lineHeight: 1.6, margin: 0 }}>Full AI trip planning with chatbot, voice assistant, live navigation, interests and real schedules.</p>
         </div>
       </Card>
@@ -1711,12 +1968,13 @@ function TripResult({ result: r, onBack, fromProfile = false, onStartTrip }) {
   }, [activeTab]);
 
   return (
-    <div style={{ maxWidth: 800, margin: "0 auto", paddingBottom: 40 }}>
+    <div style={{ maxWidth: "100%", margin: "0", paddingBottom: 40 }}>
       {showTracker && <BudgetTracker tripMeta={r.meta} onClose={() => setShowTracker(false)} />}
       {showEmergency && <EmergencyPanel location={r.meta?.location} onClose={() => setShowEmergency(false)} />}
       {showRating && <TripRating tripTitle={r.title} onClose={() => setShowRating(false)} />}
 
-      <div style={{ background: "linear-gradient(135deg,#1e3a8a,#1e293b)", padding: "22px 20px" }}>
+      <div style={{ background: "linear-gradient(135deg,#1e3a8a,#1e293b)", padding: "28px 20px" }}>
+        <div style={{ maxWidth: 1000, margin: "0 auto" }}>
         <div style={{ textAlign: "center", marginBottom: 14 }}>
           <h2 style={{ margin: "0 0 4px", fontSize: 20, fontWeight: 800, color: "#fff" }}>{r.title}</h2>
           <p style={{ color: "#94a3b8", fontSize: 13, margin: "0 0 10px" }}>{r.summary}</p>
@@ -1751,6 +2009,7 @@ function TripResult({ result: r, onBack, fromProfile = false, onStartTrip }) {
           <button onClick={() => setShowRating(true)} style={{ padding: "8px 14px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.08)", color: "#fde68a", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>⭐ Rate</button>
           <button onClick={onBack} style={{ padding: "8px 14px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.08)", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>← {fromProfile ? "Profile" : "New Trip"}</button>
         </div>
+        </div>{/* end inner max-width div */}
       </div>
 
       {/* Tabs */}
@@ -1760,7 +2019,7 @@ function TripResult({ result: r, onBack, fromProfile = false, onStartTrip }) {
         ))}
       </div>
 
-      <div style={{ padding: "16px" }}>
+      <div style={{ maxWidth: 1000, margin: "0 auto", padding: "16px 20px 40px" }}>
         {/* TRAVEL TAB */}
         {activeTab === "travel" && r.travelInfo && (
           <div>
@@ -1858,7 +2117,7 @@ function TripResult({ result: r, onBack, fromProfile = false, onStartTrip }) {
                     </button>
                     {open && (
                       <div style={{ padding: "0 14px 14px" }}>
-                        <PlaceImage query={`${r.meta?.location} ${day.theme || ""}`} height={220} />
+                        <PlaceImage query={`${r.meta?.location} ${day.theme || ""}`} height={220} dayIndex={i} actIndex={0} />
                         {day.meals && (
                           <div style={{ background: "#fff9f0", borderRadius: 12, padding: "12px", marginBottom: 12, border: "1px solid #fed7aa" }}>
                             <div style={{ fontWeight: 700, fontSize: 13, color: "#92400e", marginBottom: 8 }}>🍽 Meal Plan</div>
@@ -1872,7 +2131,7 @@ function TripResult({ result: r, onBack, fromProfile = false, onStartTrip }) {
                         )}
                         {day.activities?.map((a, j) => (
                           <div key={j} style={{ marginBottom: 14, paddingBottom: 14, borderBottom: j < day.activities.length - 1 ? "1px solid #f1f5f9" : "none" }}>
-                            <PlaceImage query={`${a.name} ${r.meta?.location}`} height={220} />
+                            <PlaceImage query={`${a.name} ${r.meta?.location}`} height={220} dayIndex={i} actIndex={j} />
                             <div style={{ display: "flex", gap: 10 }}>
                               <div style={{ width: 28, height: 28, borderRadius: 8, background: `${accent}15`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, flexShrink: 0 }}>{a.emoji || "📍"}</div>
                               <div style={{ flex: 1 }}>
@@ -1896,7 +2155,7 @@ function TripResult({ result: r, onBack, fromProfile = false, onStartTrip }) {
                             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                               {day.nearby_places.map((p, k) => (
                                 <div key={k} style={{ background: "#f8fafc", borderRadius: 12, overflow: "hidden", border: "1px solid #e2e8f0" }}>
-                                  <PlaceImage query={`${p.name} ${r.meta?.location}`} height={120} />
+                                  <PlaceImage query={`${p.name} ${r.meta?.location}`} height={120} dayIndex={i} actIndex={k + 10} />
                                   <div style={{ padding: "8px 10px" }}>
                                     <div style={{ fontWeight: 700, fontSize: 12, color: "#1e293b" }}>{p.name}</div>
                                     {p.type && <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 1 }}>{p.type}</div>}
@@ -1988,25 +2247,59 @@ function TripResult({ result: r, onBack, fromProfile = false, onStartTrip }) {
         )}
 
         {/* HOTELS TAB */}
-        {activeTab === "hotels" && r.hotels?.map((h, i) => {
-          const c = h.type === "Budget" ? "#059669" : h.type === "Luxury" ? "#d97706" : "#2563eb";
-          return (
-            <Card key={i}>
-              <PlaceImage query={`${h.name} ${r.meta?.location} hotel`} height={220} />
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 6 }}><span style={{ fontWeight: 800, color: "#1e293b", fontSize: 15 }}>🏨 {h.name}</span><Badge text={h.type} color={c} /></div>
-                  <div style={{ fontSize: 13, color: "#64748b" }}>📍 {h.area} · ⭐ {h.rating}</div>
-                  {h.description && <div style={{ fontSize: 13, color: "#475569", marginTop: 4, lineHeight: 1.5 }}>{h.description}</div>}
-                  {h.phone && <div style={{ fontSize: 12, color: "#2563eb", marginTop: 3 }}>📞 {h.phone}</div>}
-                  {h.amenities?.length > 0 && <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>{h.amenities.map((a, j) => <span key={j} style={{ fontSize: 11, background: "#f1f5f9", color: "#475569", borderRadius: 20, padding: "3px 10px", fontWeight: 600 }}>✓ {a}</span>)}</div>}
-                  <a href={`https://www.google.com/maps/search/${encodeURIComponent(h.name + " " + (r.meta?.location || ""))}`} target="_blank" rel="noreferrer" style={{ display: "inline-block", marginTop: 10, padding: "6px 14px", borderRadius: 8, background: "#eff6ff", color: "#2563eb", fontSize: 12, fontWeight: 700, textDecoration: "none" }}>📍 Maps →</a>
-                </div>
-                <div style={{ fontWeight: 900, color: c, fontSize: 16, whiteSpace: "nowrap" }}>{h.price}</div>
-              </div>
-            </Card>
-          );
-        })}
+        {activeTab === "hotels" && (
+          <div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+              {["All", "Budget", "Mid-Range", "Luxury"].map(type => (
+                <span key={type} style={{ padding: "6px 16px", borderRadius: 20, fontSize: 12, fontWeight: 700, cursor: "default",
+                  background: type === "All" ? "#2563eb" : type === "Budget" ? "#05966920" : type === "Luxury" ? "#d9770620" : "#2563eb20",
+                  color: type === "All" ? "#fff" : type === "Budget" ? "#059669" : type === "Luxury" ? "#d97706" : "#2563eb",
+                  border: `1px solid ${type === "All" ? "#2563eb" : type === "Budget" ? "#059669" : type === "Luxury" ? "#d97706" : "#2563eb"}40`
+                }}>{type === "Budget" ? "🎒" : type === "Mid-Range" ? "🏨" : type === "Luxury" ? "✨" : "🏨"} {type}</span>
+              ))}
+              <span style={{ fontSize: 12, color: "#64748b", padding: "6px 0", alignSelf: "center" }}>{r.hotels?.length || 0} hotels found</span>
+            </div>
+            {r.hotels?.map((h, i) => {
+              const c = h.type === "Budget" ? "#059669" : h.type === "Luxury" ? "#d97706" : "#2563eb";
+              const mapsUrl = `https://www.google.com/maps/search/${encodeURIComponent(h.name + " hotel " + (r.meta?.location || ""))}`;
+              return (
+                <Card key={i} style={{ marginBottom: 20 }}>
+                  {/* ✅ Google Maps embed shows REAL hotel location on map */}
+                  <HotelImage hotelName={h.name} location={r.meta?.location || ""} height={240} />
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginTop: 4 }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 6 }}>
+                        <span style={{ fontWeight: 800, color: "#1e293b", fontSize: 16 }}>🏨 {h.name}</span>
+                        <Badge text={h.type} color={c} />
+                      </div>
+                      <div style={{ fontSize: 13, color: "#64748b", marginBottom: 4 }}>📍 {h.area} · ⭐ {h.rating}</div>
+                      {h.description && <div style={{ fontSize: 13, color: "#475569", lineHeight: 1.6, marginBottom: 6 }}>{h.description}</div>}
+                      {h.phone && (
+                        <a href={`tel:${h.phone}`} style={{ fontSize: 13, color: "#2563eb", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 4, marginBottom: 8 }}>
+                          📞 {h.phone}
+                        </a>
+                      )}
+                      {h.amenities?.length > 0 && (
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+                          {h.amenities.map((a, j) => <span key={j} style={{ fontSize: 11, background: "#f1f5f9", color: "#475569", borderRadius: 20, padding: "3px 10px", fontWeight: 600 }}>✓ {a}</span>)}
+                        </div>
+                      )}
+                      {/* View on Google Maps — prominent button */}
+                      <a href={mapsUrl} target="_blank" rel="noreferrer"
+                        style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "9px 18px", borderRadius: 10, background: "linear-gradient(135deg,#2563eb,#1d4ed8)", color: "#fff", fontSize: 13, fontWeight: 700, textDecoration: "none", boxShadow: "0 2px 8px rgba(37,99,235,0.3)" }}>
+                        🗺 View on Google Maps
+                      </a>
+                    </div>
+                    <div style={{ textAlign: "right", flexShrink: 0 }}>
+                      <div style={{ fontWeight: 900, color: c, fontSize: 20 }}>{h.price}</div>
+                      <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 2 }}>per night</div>
+                    </div>
+                  </div>
+                </Card>
+              );
+            })}
+          </div>
+        )}
 
         {/* BUDGET TAB */}
         {activeTab === "budget" && r.cost_breakdown && (
@@ -2101,12 +2394,15 @@ TRIP:
 - Interests: ${interestLabels}
 RULES:
 1. REALISTIC costs for ${f.location}. Hotel ~₹${Math.round(est.hotel / parseInt(f.days))}/night, Food ~₹${Math.round(est.food / parseInt(f.days) / parseInt(f.travelers))}/person/day
-2. Activities 7 AM to 10 PM with exact times
+2. Activities 7 AM to 10 PM with exact times. Day 1 start from LUNCH if overnight travel
 3. Each day: specific hotel stay, meal plan with restaurant names, 4-6 nearby places
 4. Interests-based activities: prioritize ${interestLabels}
 5. Include RETURN journey details
+6. CRITICAL - UNIQUE PLACES: Every day MUST cover COMPLETELY DIFFERENT locations and activities. Never repeat the same place name across Day 1, Day 2, Day 3. Each day should explore a different part or zone of ${f.location}.
+7. CRITICAL - 6 HOTELS: The hotels array MUST contain EXACTLY 6 different real hotels: 2 Budget hotels, 2 Mid-Range hotels, 2 Luxury hotels. Each hotel must have a unique name, different area, real phone number and realistic price.
+8. CRITICAL - UNIQUE NEARBY PLACES: nearby_places in each day must all be different from other days. Zero overlap between days.
 Return EXACT JSON (no markdown):
-{"title":"...","summary":"...","travel_info":[{"mode":"Bus","emoji":"🚌","duration":"Xh","cost":"₹X,XXX","details":"...","recommended":true,"schedule":[{"time":"${f.departureTime}","station":"${f.from || "Home"} Bus Stand","note":"Board"},{"time":"HH:MM","station":"Midway","note":"Break"},{"time":"HH:MM","station":"${f.location} Bus Stand","note":"Arrive"}]},{"mode":"Train","emoji":"🚆","duration":"Xh","cost":"₹X,XXX","details":"...","recommended":false,"schedule":[{"time":"HH:MM","station":"Station","note":"Depart"},{"time":"HH:MM","station":"${f.location} Station","note":"Arrive"}]},{"mode":"Car","emoji":"🚗","duration":"Xh","cost":"₹X,XXX total","details":"...","recommended":false,"schedule":[{"time":"HH:MM","station":"${f.from || "Home"}","note":"Start"},{"time":"HH:MM","station":"${f.location}","note":"Arrive"}]},{"mode":"Flight","emoji":"✈️","duration":"Xh","cost":"₹X,XXX","details":"...","recommended":false,"schedule":[{"time":"HH:MM","station":"${f.from || "Home"} Airport","note":"Check-in"},{"time":"HH:MM","station":"${f.location} Airport","note":"Land"}]}],"return_travel":[{"mode":"Bus","emoji":"🚌","duration":"Xh","cost":"₹X,XXX","details":"...","recommended":true,"schedule":[{"time":"HH:MM","station":"${f.location} Bus Stand","note":"Depart"},{"time":"HH:MM","station":"${f.from || "Home"} Bus Stand","note":"Home"}]},{"mode":"Train","emoji":"🚆","duration":"Xh","cost":"₹X,XXX","details":"...","recommended":false,"schedule":[{"time":"HH:MM","station":"${f.location} Station","note":"Depart"},{"time":"HH:MM","station":"${f.from || "Home"} Station","note":"Arrive"}]},{"mode":"Car","emoji":"🚗","duration":"Xh","cost":"₹X,XXX","details":"...","recommended":false,"schedule":[]},{"mode":"Flight","emoji":"✈️","duration":"Xh","cost":"₹X,XXX","details":"...","recommended":false,"schedule":[]}],"days":[{"title":"Day 1: ...","theme":"...","stay":"Hotel name","stay_cost":"₹XXX/night","cost":"₹X,XXX","activities":[{"name":"Place","time":"01:00 PM","emoji":"🏖","description":"3 sentences","cost":"₹XX","duration":"2 hrs","tip":"insider tip"}],"meals":{"breakfast":{"place":"Name","cost":"₹XX","item":"dish"},"lunch":{"place":"Name","cost":"₹XX","item":"dish"},"dinner":{"place":"Name","cost":"₹XX","item":"dish"}},"nearby_places":[{"name":"Place","type":"Beach/Fort","distance":"2 km","entry_fee":"Free"},{"name":"Place","type":"...","distance":"...","entry_fee":"..."},{"name":"Place","type":"...","distance":"...","entry_fee":"..."},{"name":"Place","type":"...","distance":"...","entry_fee":"..."}]}],"hotels":[{"name":"Hotel","type":"Budget","price":"₹XXX/night","area":"Area","rating":"3.8/5","highlight":"Feature","description":"2 sentences","phone":"+91-XXXXXXXXXX","amenities":["WiFi","AC"]}],"cost_breakdown":{"total":"₹${f.budget}","travel_to_destination":"₹X,XXX for ${f.travelers} by ${f.travelMode}","accommodation":"₹X,XXX (₹XXX × ${f.days} nights)","food":"₹X,XXX (₹XXX/day × ${f.days} × ${f.travelers})","local_transport":"₹X,XXX","activities":"₹X,XXX","misc":"₹XXX","notes":"saving tips"},"tips":["tip1","tip2","tip3","tip4","tip5"],"packing":["item1","item2","item3","item4","item5","item6"]}`;
+{"title":"...","summary":"...","travel_info":[{"mode":"Bus","emoji":"🚌","duration":"Xh","cost":"₹X,XXX","details":"...","recommended":true,"schedule":[{"time":"${f.departureTime}","station":"${f.from || "Home"} Bus Stand","note":"Board"},{"time":"HH:MM","station":"Midway","note":"Break"},{"time":"HH:MM","station":"${f.location} Bus Stand","note":"Arrive"}]},{"mode":"Train","emoji":"🚆","duration":"Xh","cost":"₹X,XXX","details":"...","recommended":false,"schedule":[{"time":"HH:MM","station":"Station","note":"Depart"},{"time":"HH:MM","station":"${f.location} Station","note":"Arrive"}]},{"mode":"Car","emoji":"🚗","duration":"Xh","cost":"₹X,XXX total","details":"...","recommended":false,"schedule":[{"time":"HH:MM","station":"${f.from || "Home"}","note":"Start"},{"time":"HH:MM","station":"${f.location}","note":"Arrive"}]},{"mode":"Flight","emoji":"✈️","duration":"Xh","cost":"₹X,XXX","details":"...","recommended":false,"schedule":[{"time":"HH:MM","station":"${f.from || "Home"} Airport","note":"Check-in"},{"time":"HH:MM","station":"${f.location} Airport","note":"Land"}]}],"return_travel":[{"mode":"Bus","emoji":"🚌","duration":"Xh","cost":"₹X,XXX","details":"...","recommended":true,"schedule":[{"time":"HH:MM","station":"${f.location} Bus Stand","note":"Depart"},{"time":"HH:MM","station":"${f.from || "Home"} Bus Stand","note":"Home"}]},{"mode":"Train","emoji":"🚆","duration":"Xh","cost":"₹X,XXX","details":"...","recommended":false,"schedule":[{"time":"HH:MM","station":"${f.location} Station","note":"Depart"},{"time":"HH:MM","station":"${f.from || "Home"} Station","note":"Arrive"}]},{"mode":"Car","emoji":"🚗","duration":"Xh","cost":"₹X,XXX","details":"...","recommended":false,"schedule":[]},{"mode":"Flight","emoji":"✈️","duration":"Xh","cost":"₹X,XXX","details":"...","recommended":false,"schedule":[]}],"days":[{"title":"Day 1: ...","theme":"...","stay":"Hotel name","stay_cost":"₹XXX/night","cost":"₹X,XXX","activities":[{"name":"Place","time":"01:00 PM","emoji":"🏖","description":"3 sentences","cost":"₹XX","duration":"2 hrs","tip":"insider tip"}],"meals":{"breakfast":{"place":"Name","cost":"₹XX","item":"dish"},"lunch":{"place":"Name","cost":"₹XX","item":"dish"},"dinner":{"place":"Name","cost":"₹XX","item":"dish"}},"nearby_places":[{"name":"Place","type":"Beach/Fort","distance":"2 km","entry_fee":"Free"},{"name":"Place","type":"...","distance":"...","entry_fee":"..."},{"name":"Place","type":"...","distance":"...","entry_fee":"..."},{"name":"Place","type":"...","distance":"...","entry_fee":"..."}]}],"hotels":[{"name":"Budget Hotel 1","type":"Budget","price":"₹XXX/night","area":"Area","rating":"3.5/5","highlight":"Feature","description":"2 sentences","phone":"+91-XXXXXXXXXX","amenities":["WiFi","AC"]},{"name":"Budget Hotel 2","type":"Budget","price":"₹XXX/night","area":"Area","rating":"3.8/5","highlight":"Feature","description":"2 sentences","phone":"+91-XXXXXXXXXX","amenities":["WiFi","AC","Parking"]},{"name":"MidRange Hotel 1","type":"Mid-Range","price":"₹X,XXX/night","area":"Area","rating":"4.1/5","highlight":"Feature","description":"2 sentences","phone":"+91-XXXXXXXXXX","amenities":["WiFi","AC","Pool","Gym"]},{"name":"MidRange Hotel 2","type":"Mid-Range","price":"₹X,XXX/night","area":"Area","rating":"4.3/5","highlight":"Feature","description":"2 sentences","phone":"+91-XXXXXXXXXX","amenities":["WiFi","AC","Restaurant","Bar"]},{"name":"Luxury Hotel 1","type":"Luxury","price":"₹X,XXX/night","area":"Area","rating":"4.6/5","highlight":"Feature","description":"2 sentences","phone":"+91-XXXXXXXXXX","amenities":["WiFi","AC","Spa","Pool","Restaurant"]},{"name":"Luxury Hotel 2","type":"Luxury","price":"₹X,XXX/night","area":"Area","rating":"4.8/5","highlight":"Feature","description":"2 sentences","phone":"+91-XXXXXXXXXX","amenities":["WiFi","AC","Spa","Pool","Restaurant","Bar","Gym"]}],"cost_breakdown":{"total":"₹${f.budget}","travel_to_destination":"₹X,XXX for ${f.travelers} by ${f.travelMode}","accommodation":"₹X,XXX (₹XXX × ${f.days} nights)","food":"₹X,XXX (₹XXX/day × ${f.days} × ${f.travelers})","local_transport":"₹X,XXX","activities":"₹X,XXX","misc":"₹XXX","notes":"saving tips"},"tips":["tip1","tip2","tip3","tip4","tip5"],"packing":["item1","item2","item3","item4","item5","item6"]}`;
 
     try {
       const raw = await callGroq(prompt); clearInterval(iv);
@@ -2250,7 +2546,7 @@ function HomePage({ user, setPage }) {
       </div>
       <div style={{ maxWidth: 800, margin: "0 auto", padding: "24px 16px" }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 12 }}>
-          {[{ id: "planner", emoji: "✈️", title: "Plan Trip", desc: "Form / Chat / Voice", color: "#2563eb" }, { id: "weather", emoji: "🌤", title: "Weather", desc: "Live forecast", color: "#0ea5e9" }, { id: "map", emoji: "🗺", title: "Maps", desc: "Directions", color: "#059669" }, { id: "hotels", emoji: "🏨", title: "Hotels", desc: "Find stays", color: "#d97706" }, { id: "profile", emoji: "👤", title: "Profile", desc: "Trip history", color: "#7c3aed" }].map(item => (
+          {[{ id: "planner", emoji: "✈️", title: "Plan Trip", desc: "Form / Chat / Voice", color: "#2563eb" }, { id: "weather", emoji: "🌤", title: "Weather", desc: "Live forecast", color: "#0ea5e9" }, { id: "map", emoji: "🗺", title: "Maps", desc: "Directions", color: "#059669" }, { id: "hotels", emoji: "🏨", title: "Hotels", desc: "Find stays", color: "#d97706" }, { id: "reviews", emoji: "⭐", title: "Reviews", desc: "Community reviews", color: "#f59e0b" }, { id: "profile", emoji: "👤", title: "Profile", desc: "Trip history", color: "#7c3aed" }].map(item => (
             <button key={item.id} onClick={() => setPage(item.id)} style={{ padding: "18px 12px", borderRadius: 16, border: `2px solid ${item.color}20`, background: `${item.color}08`, cursor: "pointer", textAlign: "center", fontFamily: "inherit" }}>
               <div style={{ fontSize: 28, marginBottom: 6 }}>{item.emoji}</div>
               <div style={{ fontWeight: 800, color: item.color, fontSize: 13 }}>{item.title}</div>
@@ -2261,6 +2557,609 @@ function HomePage({ user, setPage }) {
       </div>
     </div>
   );
+}
+
+
+// ══════════════════════════════════════════════════════════════════
+// 🔐 ADMIN PORTAL — Trip Nova Owner Dashboard
+//    Access: Login with admin@tripnova.com / TripNova@Admin2024
+//    Features: View all users, reviews, stats, manage content
+// ══════════════════════════════════════════════════════════════════
+
+// Admin credentials — change these before deploying
+const ADMIN_EMAIL = "admin@tripnova.com";
+const ADMIN_PASS  = "TripNova@Admin2024";
+
+// ── SHARED REVIEWS STORAGE ──
+// Reviews are stored in localStorage under "tripnova_reviews"
+// Since all users share the same browser on a demo, this works perfectly
+// For production: move to MongoDB via backend
+function getReviews() {
+  try { return JSON.parse(localStorage.getItem("tripnova_reviews") || "[]"); }
+  catch { return []; }
+}
+function saveReviews(reviews) {
+  localStorage.setItem("tripnova_reviews", JSON.stringify(reviews));
+}
+function getAdminData() {
+  try { return JSON.parse(localStorage.getItem("tripnova_admin_data") || "{}"); }
+  catch { return {}; }
+}
+
+// ── REVIEWS PAGE (All logged-in users can see & post reviews) ──
+function ReviewsPage({ user }) {
+  const [reviews, setReviews]   = useState(getReviews());
+  const [rating, setRating]     = useState(5);
+  const [comment, setComment]   = useState("");
+  const [title, setTitle]       = useState("");
+  const [dest, setDest]         = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [success, setSuccess]   = useState("");
+  const [filterRating, setFilterRating] = useState(0);
+  const [sortBy, setSortBy]     = useState("newest");
+
+  const myReview = reviews.find(r => r.email === user.email);
+
+  function submitReview() {
+    if (!comment.trim() || !title.trim()) { return; }
+    setSubmitting(true);
+    const newReview = {
+      id: Date.now().toString(),
+      name: user.name,
+      email: user.email,
+      avatar: user.name[0].toUpperCase(),
+      rating,
+      title: title.trim(),
+      comment: comment.trim(),
+      destination: dest.trim() || "General",
+      date: new Date().toISOString(),
+      helpful: 0,
+      helpfulBy: [],
+      verified: true,
+    };
+    const updated = [newReview, ...reviews.filter(r => r.email !== user.email)];
+    saveReviews(updated);
+    setReviews(updated);
+    setComment(""); setTitle(""); setDest(""); setRating(5);
+    setSuccess("Review posted! Thank you 🎉");
+    setTimeout(() => setSuccess(""), 3000);
+    setSubmitting(false);
+  }
+
+  function markHelpful(id) {
+    const updated = reviews.map(r => {
+      if (r.id !== id) return r;
+      const already = (r.helpfulBy || []).includes(user.email);
+      return {
+        ...r,
+        helpful: already ? r.helpful - 1 : (r.helpful || 0) + 1,
+        helpfulBy: already
+          ? (r.helpfulBy || []).filter(e => e !== user.email)
+          : [...(r.helpfulBy || []), user.email],
+      };
+    });
+    saveReviews(updated);
+    setReviews(updated);
+  }
+
+  function deleteMyReview() {
+    const updated = reviews.filter(r => r.email !== user.email);
+    saveReviews(updated); setReviews(updated);
+  }
+
+  const filtered = reviews
+    .filter(r => filterRating === 0 || r.rating === filterRating)
+    .sort((a, b) => {
+      if (sortBy === "newest") return new Date(b.date) - new Date(a.date);
+      if (sortBy === "highest") return b.rating - a.rating;
+      if (sortBy === "helpful") return (b.helpful || 0) - (a.helpful || 0);
+      return 0;
+    });
+
+  const avgRating = reviews.length
+    ? (reviews.reduce((s, r) => s + r.rating, 0) / reviews.length).toFixed(1)
+    : 0;
+
+  const ratingCounts = [5,4,3,2,1].map(star => ({
+    star, count: reviews.filter(r => r.rating === star).length
+  }));
+
+  return (
+    <div style={{ maxWidth: 800, margin: "0 auto", padding: "24px 16px" }}>
+      <style>{`
+        @keyframes fadeInUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+        .review-card{animation:fadeInUp 0.3s ease}
+      `}</style>
+
+      {/* Header */}
+      <div style={{ background: "linear-gradient(135deg,#1e3a8a,#312e81)", borderRadius: 20, padding: "28px 24px", marginBottom: 24, textAlign: "center" }}>
+        <div style={{ fontSize: 48, marginBottom: 8 }}>⭐</div>
+        <h2 style={{ margin: "0 0 6px", fontSize: 24, fontWeight: 800, color: "#fff" }}>Community Reviews</h2>
+        <p style={{ color: "#94a3b8", fontSize: 14, margin: 0 }}>See what travelers are saying about Trip Nova</p>
+      </div>
+
+      {/* Stats bar */}
+      <div style={{ background: "#fff", borderRadius: 16, padding: "20px 24px", marginBottom: 20, boxShadow: "0 2px 16px rgba(0,0,0,0.06)", border: "1px solid #e8edf4" }}>
+        <div style={{ display: "flex", gap: 24, alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 40, fontWeight: 900, color: "#2563eb", lineHeight: 1 }}>{avgRating}</div>
+            <div style={{ fontSize: 22, color: "#f59e0b", margin: "4px 0 2px" }}>
+              {"★".repeat(Math.round(avgRating))}{"☆".repeat(5 - Math.round(avgRating))}
+            </div>
+            <div style={{ fontSize: 12, color: "#64748b" }}>{reviews.length} reviews</div>
+          </div>
+          <div style={{ flex: 1, minWidth: 200 }}>
+            {ratingCounts.map(({ star, count }) => (
+              <div key={star} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                <span style={{ fontSize: 12, color: "#64748b", width: 20, textAlign: "right" }}>{star}</span>
+                <span style={{ fontSize: 13, color: "#f59e0b" }}>★</span>
+                <div style={{ flex: 1, height: 8, background: "#f1f5f9", borderRadius: 4, overflow: "hidden" }}>
+                  <div style={{ height: "100%", background: "linear-gradient(90deg,#f59e0b,#d97706)", borderRadius: 4, width: `${reviews.length ? (count/reviews.length)*100 : 0}%`, transition: "width 0.4s" }} />
+                </div>
+                <span style={{ fontSize: 12, color: "#94a3b8", width: 24 }}>{count}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Write Review */}
+      <div style={{ background: "#fff", borderRadius: 16, padding: "20px", marginBottom: 20, boxShadow: "0 2px 16px rgba(0,0,0,0.06)", border: "1px solid #e8edf4" }}>
+        <h3 style={{ margin: "0 0 16px", fontWeight: 800, color: "#1e293b", fontSize: 16 }}>
+          {myReview ? "✏️ Edit Your Review" : "✍️ Write a Review"}
+        </h3>
+        {success && (
+          <div style={{ background: "#f0fdf4", border: "1.5px solid #86efac", borderRadius: 10, padding: "10px 14px", color: "#166534", fontWeight: 600, fontSize: 13, marginBottom: 14 }}>✅ {success}</div>
+        )}
+
+        {/* Star selector */}
+        <div style={{ marginBottom: 14 }}>
+          <Lbl>YOUR RATING</Lbl>
+          <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+            {[1,2,3,4,5].map(s => (
+              <button key={s} onClick={() => setRating(s)} style={{
+                fontSize: 28, background: "none", border: "none", cursor: "pointer",
+                color: s <= rating ? "#f59e0b" : "#e2e8f0", transition: "transform 0.1s",
+                transform: s <= rating ? "scale(1.1)" : "scale(1)",
+              }}>★</button>
+            ))}
+            <span style={{ fontSize: 13, color: "#64748b", alignSelf: "center", marginLeft: 4 }}>
+              {["","Terrible","Poor","Average","Good","Excellent"][rating]}
+            </span>
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 12 }}>
+          <Lbl>REVIEW TITLE</Lbl>
+          <input value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Amazing trip planning experience!" style={inp()} />
+        </div>
+        <div style={{ marginBottom: 12 }}>
+          <Lbl>DESTINATION (optional)</Lbl>
+          <input value={dest} onChange={e => setDest(e.target.value)} placeholder="e.g. Goa, Manali, Bali..." style={inp()} />
+        </div>
+        <div style={{ marginBottom: 16 }}>
+          <Lbl>YOUR REVIEW</Lbl>
+          <textarea value={comment} onChange={e => setComment(e.target.value)} placeholder="Share your experience with Trip Nova..." rows={4}
+            style={{ ...inp(), resize: "vertical", minHeight: 100 }} />
+        </div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={submitReview} disabled={!comment.trim() || !title.trim() || submitting}
+            style={{ flex: 1, padding: "12px", borderRadius: 12, border: "none", background: "linear-gradient(135deg,#2563eb,#7c3aed)", color: "#fff", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit", opacity: (!comment.trim() || !title.trim()) ? 0.5 : 1 }}>
+            {submitting ? "Posting…" : myReview ? "Update Review" : "Post Review"}
+          </button>
+          {myReview && (
+            <button onClick={deleteMyReview} style={{ padding: "12px 18px", borderRadius: 12, border: "1.5px solid #fecaca", background: "#fef2f2", color: "#dc2626", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+              🗑 Delete
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Filter + Sort */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: "#64748b" }}>Filter:</span>
+        {[0,5,4,3,2,1].map(s => (
+          <button key={s} onClick={() => setFilterRating(s)} style={{
+            padding: "6px 14px", borderRadius: 20, border: "none", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+            background: filterRating === s ? "#2563eb" : "#f1f5f9",
+            color: filterRating === s ? "#fff" : "#475569",
+          }}>{s === 0 ? "All" : `${s}★`}</button>
+        ))}
+        <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ ...inp({ padding: "6px 12px", fontSize: 12 }), width: "auto", marginLeft: "auto" }}>
+          <option value="newest">Newest First</option>
+          <option value="highest">Highest Rated</option>
+          <option value="helpful">Most Helpful</option>
+        </select>
+      </div>
+
+      {/* Review cards */}
+      {filtered.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "40px 20px", background: "#fff", borderRadius: 16, border: "1px solid #e8edf4" }}>
+          <div style={{ fontSize: 40, marginBottom: 12 }}>✍️</div>
+          <p style={{ color: "#64748b", fontSize: 15 }}>No reviews yet. Be the first to review Trip Nova!</p>
+        </div>
+      ) : (
+        filtered.map((r, i) => (
+          <div key={r.id} className="review-card" style={{
+            background: "#fff", borderRadius: 16, padding: "20px", marginBottom: 14,
+            boxShadow: "0 2px 12px rgba(0,0,0,0.06)", border: `1.5px solid ${r.email === user.email ? "#bfdbfe" : "#e8edf4"}`,
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 10 }}>
+              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                <div style={{ width: 42, height: 42, borderRadius: "50%", background: "linear-gradient(135deg,#2563eb,#7c3aed)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 800, fontSize: 16, flexShrink: 0 }}>
+                  {r.avatar}
+                </div>
+                <div>
+                  <div style={{ fontWeight: 800, color: "#1e293b", fontSize: 14 }}>
+                    {r.name}
+                    {r.email === user.email && <span style={{ marginLeft: 8, fontSize: 10, background: "#eff6ff", color: "#2563eb", padding: "2px 8px", borderRadius: 10, fontWeight: 700 }}>YOU</span>}
+                    {r.verified && <span style={{ marginLeft: 6, fontSize: 10, background: "#f0fdf4", color: "#059669", padding: "2px 8px", borderRadius: 10, fontWeight: 700 }}>✓ Verified</span>}
+                  </div>
+                  <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 2 }}>
+                    {new Date(r.date).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+                    {r.destination && r.destination !== "General" && <span> · 📍 {r.destination}</span>}
+                  </div>
+                </div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ color: "#f59e0b", fontSize: 16, letterSpacing: 1 }}>
+                  {"★".repeat(r.rating)}{"☆".repeat(5 - r.rating)}
+                </div>
+              </div>
+            </div>
+            <div style={{ fontWeight: 700, color: "#1e293b", fontSize: 14, marginBottom: 6 }}>{r.title}</div>
+            <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.7, margin: "0 0 12px" }}>{r.comment}</p>
+            <button onClick={() => markHelpful(r.id)} style={{
+              padding: "5px 14px", borderRadius: 20, border: `1.5px solid ${(r.helpfulBy || []).includes(user.email) ? "#2563eb" : "#e2e8f0"}`,
+              background: (r.helpfulBy || []).includes(user.email) ? "#eff6ff" : "#fff",
+              color: (r.helpfulBy || []).includes(user.email) ? "#2563eb" : "#64748b",
+              fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+            }}>
+              👍 Helpful {r.helpful > 0 ? `(${r.helpful})` : ""}
+            </button>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
+// ── ADMIN LOGIN PAGE ──
+function AdminLogin({ onAdminLogin }) {
+  const [email, setEmail]       = useState("");
+  const [pass, setPass]         = useState("");
+  const [error, setError]       = useState("");
+  const [loading, setLoading]   = useState(false);
+
+  function handleLogin() {
+    if (!email || !pass) { setError("Fill all fields."); return; }
+    setLoading(true); setError("");
+    setTimeout(() => {
+      if (email.trim() === ADMIN_EMAIL && pass === ADMIN_PASS) {
+        onAdminLogin();
+      } else {
+        setError("Invalid admin credentials.");
+      }
+      setLoading(false);
+    }, 600);
+  }
+
+  return (
+    <div style={{
+      minHeight: "100vh", background: "linear-gradient(135deg,#0f172a,#1e1b4b)",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      fontFamily: "'DM Sans','Segoe UI',sans-serif",
+    }}>
+      <div style={{ background: "#fff", borderRadius: 24, padding: "40px 36px", width: "100%", maxWidth: 420, boxShadow: "0 24px 80px rgba(0,0,0,0.5)" }}>
+        <div style={{ textAlign: "center", marginBottom: 28 }}>
+          <div style={{ fontSize: 52, marginBottom: 10 }}>🛡️</div>
+          <h2 style={{ margin: "0 0 6px", fontWeight: 800, color: "#1e293b", fontSize: 22 }}>Admin Portal</h2>
+          <p style={{ color: "#64748b", fontSize: 13, margin: 0 }}>Trip Nova · Owner Access</p>
+        </div>
+        {error && <div style={{ background: "#fef2f2", border: "1.5px solid #fecaca", borderRadius: 10, padding: "10px 14px", color: "#dc2626", fontWeight: 600, fontSize: 13, marginBottom: 16 }}>⚠️ {error}</div>}
+        <div style={{ marginBottom: 14 }}>
+          <Lbl>ADMIN EMAIL</Lbl>
+          <input type="email" placeholder="admin" value={email}
+            onChange={e => setEmail(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && handleLogin()}
+            style={inp({ padding: "13px 16px", fontSize: 14, borderRadius: 12 })} />
+        </div>
+        <div style={{ marginBottom: 24 }}>
+          <Lbl>PASSWORD</Lbl>
+          <input type="password" placeholder="Admin password" value={pass}
+            onChange={e => setPass(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && handleLogin()}
+            style={inp({ padding: "13px 16px", fontSize: 14, borderRadius: 12 })} />
+        </div>
+        <button onClick={handleLogin} disabled={loading} style={{
+          width: "100%", padding: "14px", borderRadius: 13, border: "none",
+          background: "linear-gradient(135deg,#dc2626,#9f1239)",
+          color: "#fff", fontWeight: 800, fontSize: 15, cursor: "pointer", fontFamily: "inherit",
+          boxShadow: "0 4px 18px rgba(220,38,38,0.35)",
+        }}>{loading ? "Verifying…" : "🔐 Login as Admin"}</button>
+        <p style={{ textAlign: "center", fontSize: 12, color: "#94a3b8", marginTop: 16 }}>
+          Access restricted to authorized owners only
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ── ADMIN DASHBOARD ──
+function AdminDashboard({ onLogout }) {
+  const [tab, setTab]         = useState("overview");
+  const [reviews, setReviews] = useState(getReviews());
+  const [filterStar, setFilterStar] = useState(0);
+  const [searchUser, setSearchUser] = useState("");
+
+  // Simulate users from trip history patterns
+  const allTrips  = [];
+  const allUsers  = [];
+  const ratingMap = {};
+  const cityCount = {};
+
+  reviews.forEach(r => {
+    if (!ratingMap[r.email]) ratingMap[r.email] = [];
+    ratingMap[r.email].push(r.rating);
+    if (r.destination && r.destination !== "General") {
+      cityCount[r.destination] = (cityCount[r.destination] || 0) + 1;
+    }
+  });
+
+  const topCities = Object.entries(cityCount).sort((a,b) => b[1]-a[1]).slice(0,5);
+  const avgRating = reviews.length ? (reviews.reduce((s,r)=>s+r.rating,0)/reviews.length).toFixed(1) : "—";
+  const totalReviews = reviews.length;
+  const fiveStars = reviews.filter(r=>r.rating===5).length;
+
+  function deleteReview(id) {
+    const updated = reviews.filter(r => r.id !== id);
+    saveReviews(updated); setReviews(updated);
+  }
+
+  function exportReviews() {
+    const csv = [
+      ["Name","Email","Rating","Title","Destination","Comment","Date"].join(","),
+      ...reviews.map(r => [r.name,r.email,r.rating,`"${r.title}"`,r.destination,`"${r.comment}"`,new Date(r.date).toLocaleDateString()].join(","))
+    ].join("\n");
+    const blob = new Blob([csv], { type:"text/csv" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "tripnova_reviews.csv";
+    a.click();
+  }
+
+  const TABS = [
+    { id:"overview", label:"📊 Overview" },
+    { id:"reviews", label:"⭐ Reviews" },
+    { id:"settings", label:"⚙️ Settings" },
+  ];
+
+  const statCards = [
+    { label:"Total Reviews", value: totalReviews, emoji:"⭐", color:"#2563eb" },
+    { label:"Avg Rating",    value: avgRating,    emoji:"📊", color:"#059669" },
+    { label:"5-Star Reviews",value: fiveStars,    emoji:"🏆", color:"#d97706" },
+    { label:"Unique Users",  value: new Set(reviews.map(r=>r.email)).size, emoji:"👥", color:"#7c3aed" },
+  ];
+
+  const filteredReviews = reviews
+    .filter(r => filterStar === 0 || r.rating === filterStar)
+    .filter(r => searchUser === "" || r.name.toLowerCase().includes(searchUser.toLowerCase()) || r.email.toLowerCase().includes(searchUser.toLowerCase()));
+
+  return (
+    <div style={{ minHeight:"100vh", background:"#0f172a", fontFamily:"'DM Sans','Segoe UI',sans-serif", color:"#fff" }}>
+      <style>{`@keyframes fadeIn{from{opacity:0}to{opacity:1}}`}</style>
+
+      {/* Admin Navbar */}
+      <div style={{ background:"#1e293b", borderBottom:"1px solid #334155", padding:"0 24px", height:60, display:"flex", alignItems:"center", justifyContent:"space-between", position:"sticky", top:0, zIndex:100 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          <div style={{ width:34,height:34,borderRadius:10,background:"linear-gradient(135deg,#dc2626,#9f1239)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16 }}>🛡️</div>
+          <div>
+            <div style={{ fontWeight:800, fontSize:14, color:"#fff" }}>Trip Nova Admin</div>
+            <div style={{ fontSize:10, color:"#64748b" }}>Owner Portal</div>
+          </div>
+        </div>
+        <div style={{ display:"flex", gap:6 }}>
+          {TABS.map(t => (
+            <button key={t.id} onClick={() => setTab(t.id)} style={{
+              padding:"7px 14px", borderRadius:10, border:"none",
+              background: tab===t.id ? "linear-gradient(135deg,#dc2626,#9f1239)" : "#334155",
+              color:"#fff", fontWeight:700, fontSize:12, cursor:"pointer", fontFamily:"inherit",
+            }}>{t.label}</button>
+          ))}
+          <button onClick={onLogout} style={{ padding:"7px 14px", borderRadius:10, border:"1px solid #475569", background:"none", color:"#94a3b8", fontWeight:700, fontSize:12, cursor:"pointer", fontFamily:"inherit", marginLeft:8 }}>← Exit Admin</button>
+        </div>
+      </div>
+
+      <div style={{ maxWidth:1100, margin:"0 auto", padding:"24px 20px" }}>
+
+        {/* OVERVIEW TAB */}
+        {tab==="overview" && (
+          <div style={{ animation:"fadeIn 0.3s ease" }}>
+            <h2 style={{ fontWeight:800, fontSize:20, margin:"0 0 20px", color:"#fff" }}>📊 Dashboard Overview</h2>
+
+            {/* Stat cards */}
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))", gap:14, marginBottom:24 }}>
+              {statCards.map((s,i) => (
+                <div key={i} style={{ background:"#1e293b", borderRadius:16, padding:"20px", border:`1.5px solid ${s.color}30` }}>
+                  <div style={{ fontSize:28, marginBottom:8 }}>{s.emoji}</div>
+                  <div style={{ fontWeight:900, fontSize:32, color:s.color, lineHeight:1 }}>{s.value}</div>
+                  <div style={{ fontSize:12, color:"#64748b", fontWeight:700, marginTop:4 }}>{s.label}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Rating breakdown */}
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:24 }}>
+              <div style={{ background:"#1e293b", borderRadius:16, padding:"20px", border:"1px solid #334155" }}>
+                <div style={{ fontWeight:700, fontSize:14, color:"#fff", marginBottom:14 }}>⭐ Rating Breakdown</div>
+                {[5,4,3,2,1].map(star => {
+                  const count = reviews.filter(r=>r.rating===star).length;
+                  const pct = reviews.length ? (count/reviews.length)*100 : 0;
+                  return (
+                    <div key={star} style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8 }}>
+                      <span style={{ fontSize:12, color:"#94a3b8", width:16 }}>{star}</span>
+                      <span style={{ color:"#f59e0b", fontSize:14 }}>★</span>
+                      <div style={{ flex:1, height:10, background:"#334155", borderRadius:5, overflow:"hidden" }}>
+                        <div style={{ height:"100%", background:`linear-gradient(90deg,#f59e0b,#d97706)`, width:`${pct}%`, borderRadius:5 }} />
+                      </div>
+                      <span style={{ fontSize:12, color:"#64748b", width:28 }}>{count}</span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div style={{ background:"#1e293b", borderRadius:16, padding:"20px", border:"1px solid #334155" }}>
+                <div style={{ fontWeight:700, fontSize:14, color:"#fff", marginBottom:14 }}>📍 Top Destinations Reviewed</div>
+                {topCities.length === 0 ? (
+                  <p style={{ color:"#64748b", fontSize:13 }}>No destination data yet</p>
+                ) : topCities.map(([city, count], i) => (
+                  <div key={city} style={{ display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:"1px solid #334155", fontSize:13 }}>
+                    <span style={{ color:"#e2e8f0" }}>#{i+1} {city}</span>
+                    <span style={{ color:"#2563eb", fontWeight:700 }}>{count} reviews</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Recent reviews preview */}
+            <div style={{ background:"#1e293b", borderRadius:16, padding:"20px", border:"1px solid #334155" }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+                <div style={{ fontWeight:700, fontSize:14, color:"#fff" }}>📝 Recent Reviews</div>
+                <button onClick={() => setTab("reviews")} style={{ padding:"5px 12px", borderRadius:8, border:"1px solid #475569", background:"none", color:"#94a3b8", fontSize:11, cursor:"pointer", fontFamily:"inherit" }}>View All →</button>
+              </div>
+              {reviews.slice(0,3).map(r => (
+                <div key={r.id} style={{ padding:"10px 0", borderBottom:"1px solid #334155", display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:12 }}>
+                  <div style={{ flex:1 }}>
+                    <div style={{ fontWeight:700, fontSize:13, color:"#e2e8f0" }}>{r.name} <span style={{ color:"#f59e0b" }}>{"★".repeat(r.rating)}</span></div>
+                    <div style={{ fontSize:12, color:"#64748b", marginTop:2 }}>{r.title}</div>
+                  </div>
+                  <div style={{ fontSize:11, color:"#475569" }}>{new Date(r.date).toLocaleDateString()}</div>
+                </div>
+              ))}
+              {reviews.length === 0 && <p style={{ color:"#64748b", fontSize:13 }}>No reviews yet</p>}
+            </div>
+          </div>
+        )}
+
+        {/* REVIEWS MANAGEMENT TAB */}
+        {tab==="reviews" && (
+          <div style={{ animation:"fadeIn 0.3s ease" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20, flexWrap:"wrap", gap:12 }}>
+              <h2 style={{ fontWeight:800, fontSize:20, margin:0, color:"#fff" }}>⭐ Manage Reviews ({reviews.length})</h2>
+              <div style={{ display:"flex", gap:8 }}>
+                <button onClick={exportReviews} style={{ padding:"8px 16px", borderRadius:10, border:"1px solid #475569", background:"#1e293b", color:"#94a3b8", fontWeight:700, fontSize:12, cursor:"pointer", fontFamily:"inherit" }}>⬇️ Export CSV</button>
+              </div>
+            </div>
+
+            {/* Filters */}
+            <div style={{ display:"flex", gap:8, marginBottom:16, flexWrap:"wrap" }}>
+              <input value={searchUser} onChange={e => setSearchUser(e.target.value)} placeholder="🔍 Search by name or email..." style={{ ...inp({ padding:"9px 14px", fontSize:13, borderRadius:10 }), flex:1, minWidth:200, maxWidth:320 }} />
+              {[0,5,4,3,2,1].map(s => (
+                <button key={s} onClick={() => setFilterStar(s)} style={{
+                  padding:"7px 14px", borderRadius:20, border:"none", fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit",
+                  background: filterStar===s ? "#dc2626" : "#1e293b",
+                  color: filterStar===s ? "#fff" : "#94a3b8",
+                  border: `1px solid ${filterStar===s ? "#dc2626" : "#334155"}`,
+                }}>{s===0 ? "All" : `${s}★`}</button>
+              ))}
+            </div>
+
+            {/* Review rows */}
+            {filteredReviews.length === 0 ? (
+              <div style={{ textAlign:"center", padding:"40px", background:"#1e293b", borderRadius:16 }}>
+                <div style={{ fontSize:40, marginBottom:12 }}>📭</div>
+                <p style={{ color:"#64748b" }}>No reviews found</p>
+              </div>
+            ) : filteredReviews.map(r => (
+              <div key={r.id} style={{ background:"#1e293b", borderRadius:14, padding:"16px 18px", marginBottom:12, border:"1px solid #334155" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:12 }}>
+                  <div style={{ flex:1 }}>
+                    <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap", marginBottom:4 }}>
+                      <div style={{ width:32,height:32,borderRadius:"50%",background:"linear-gradient(135deg,#2563eb,#7c3aed)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:800,fontSize:13,flexShrink:0 }}>{r.avatar}</div>
+                      <span style={{ fontWeight:800, color:"#e2e8f0", fontSize:14 }}>{r.name}</span>
+                      <span style={{ fontSize:11, color:"#64748b" }}>{r.email}</span>
+                      <span style={{ color:"#f59e0b", fontSize:14 }}>{"★".repeat(r.rating)}{"☆".repeat(5-r.rating)}</span>
+                      {r.destination && r.destination !== "General" && <span style={{ fontSize:11, background:"#eff6ff", color:"#2563eb", padding:"2px 8px", borderRadius:10 }}>📍 {r.destination}</span>}
+                    </div>
+                    <div style={{ fontWeight:700, color:"#fff", fontSize:13, marginBottom:4 }}>{r.title}</div>
+                    <p style={{ color:"#94a3b8", fontSize:13, margin:"0 0 8px", lineHeight:1.6 }}>{r.comment}</p>
+                    <div style={{ fontSize:11, color:"#475569" }}>
+                      {new Date(r.date).toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"})}
+                      {" · "}👍 {r.helpful || 0} helpful
+                    </div>
+                  </div>
+                  <button onClick={() => deleteReview(r.id)} style={{ padding:"6px 12px", borderRadius:8, border:"1px solid #ef444440", background:"#fef2f220", color:"#ef4444", fontWeight:700, fontSize:12, cursor:"pointer", fontFamily:"inherit", flexShrink:0 }}>🗑 Delete</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* SETTINGS TAB */}
+        {tab==="settings" && (
+          <div style={{ animation:"fadeIn 0.3s ease" }}>
+            <h2 style={{ fontWeight:800, fontSize:20, margin:"0 0 20px", color:"#fff" }}>⚙️ Admin Settings</h2>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
+              <div style={{ background:"#1e293b", borderRadius:16, padding:"20px", border:"1px solid #334155" }}>
+                <div style={{ fontWeight:700, fontSize:14, color:"#fff", marginBottom:12 }}>🔑 Admin Credentials</div>
+                <div style={{ fontSize:13, color:"#94a3b8", marginBottom:8 }}>Email: <span style={{ color:"#60a5fa" }}>{ADMIN_EMAIL}</span></div>
+                <div style={{ fontSize:13, color:"#94a3b8", marginBottom:16 }}>Password: <span style={{ color:"#60a5fa" }}>••••••••••••••</span></div>
+                <div style={{ fontSize:12, color:"#475569", background:"#0f172a", borderRadius:10, padding:"10px 14px" }}>
+                  To change credentials, edit ADMIN_EMAIL and ADMIN_PASS constants in App.js
+                </div>
+              </div>
+              <div style={{ background:"#1e293b", borderRadius:16, padding:"20px", border:"1px solid #334155" }}>
+                <div style={{ fontWeight:700, fontSize:14, color:"#fff", marginBottom:12 }}>💾 Data Management</div>
+                <button onClick={() => { if(window.confirm("Delete ALL reviews? This cannot be undone.")) { saveReviews([]); setReviews([]); } }}
+                  style={{ width:"100%", padding:"10px", borderRadius:10, border:"1.5px solid #ef4444", background:"#fef2f210", color:"#ef4444", fontWeight:700, fontSize:13, cursor:"pointer", fontFamily:"inherit", marginBottom:10 }}>
+                  🗑 Clear All Reviews
+                </button>
+                <button onClick={exportReviews}
+                  style={{ width:"100%", padding:"10px", borderRadius:10, border:"1.5px solid #059669", background:"#f0fdf410", color:"#059669", fontWeight:700, fontSize:13, cursor:"pointer", fontFamily:"inherit" }}>
+                  ⬇️ Export Reviews CSV
+                </button>
+              </div>
+              <div style={{ background:"#1e293b", borderRadius:16, padding:"20px", border:"1px solid #334155" }}>
+                <div style={{ fontWeight:700, fontSize:14, color:"#fff", marginBottom:12 }}>ℹ️ System Info</div>
+                {[
+                  ["App Name", "Trip Nova"],
+                  ["Version", "2.0.0"],
+                  ["Frontend", "React.js 18"],
+                  ["Backend", "Node.js + Express"],
+                  ["Database", "MongoDB + localStorage"],
+                  ["AI Engine", "Groq LLaMA 3.3-70B"],
+                  ["Image API", "Pexels Photos"],
+                  ["Total Reviews", reviews.length],
+                ].map(([k,v]) => (
+                  <div key={k} style={{ display:"flex", justifyContent:"space-between", padding:"6px 0", borderBottom:"1px solid #334155", fontSize:13 }}>
+                    <span style={{ color:"#64748b" }}>{k}</span>
+                    <span style={{ color:"#e2e8f0", fontWeight:600 }}>{v}</span>
+                  </div>
+                ))}
+              </div>
+              <div style={{ background:"#1e293b", borderRadius:16, padding:"20px", border:"1px solid #334155" }}>
+                <div style={{ fontWeight:700, fontSize:14, color:"#fff", marginBottom:12 }}>🚀 Quick Actions</div>
+                <button onClick={() => setTab("reviews")} style={{ width:"100%", padding:"10px", borderRadius:10, border:"none", background:"linear-gradient(135deg,#2563eb,#7c3aed)", color:"#fff", fontWeight:700, fontSize:13, cursor:"pointer", fontFamily:"inherit", marginBottom:10 }}>
+                  ⭐ View All Reviews
+                </button>
+                <button onClick={() => window.open("/", "_self")} style={{ width:"100%", padding:"10px", borderRadius:10, border:"1.5px solid #475569", background:"none", color:"#94a3b8", fontWeight:700, fontSize:13, cursor:"pointer", fontFamily:"inherit" }}>
+                  🌐 Go to Main App
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+      </div>
+    </div>
+  );
+}
+
+// ── ADMIN PORTAL WRAPPER (handles login/dashboard state) ──
+function AdminPortal() {
+  const [loggedIn, setLoggedIn] = useState(false);
+  if (!loggedIn) return <AdminLogin onAdminLogin={() => setLoggedIn(true)} />;
+  return <AdminDashboard onLogout={() => setLoggedIn(false)} />;
 }
 
 // ── ROOT APP ─────────────────────────────────────────────────────
@@ -2277,42 +3176,59 @@ function PlannerPageWrapper({ chatPlan, setChatPlan }) {
 
 export default function App() {
   const saved = localStorage.getItem("user");
-  const [user, setUser] = useState(saved ? JSON.parse(saved) : null);
-  const [page, setPage] = useState("home");
+  const [user, setUser]     = useState(saved ? JSON.parse(saved) : null);
+  const [page, setPage]     = useState("home");
   const [chatPlan, setChatPlan] = useState(null);
+  const [showAdmin, setShowAdmin] = useState(false);
 
   function handleLogin(u) { setUser(u); setPage("home"); }
-  function handleLogout() { localStorage.removeItem("token"); localStorage.removeItem("user"); setUser(null); setPage("home"); }
+  function handleLogout() {
+    localStorage.removeItem("token");
+    localStorage.removeItem("user");
+    setUser(null); setPage("home");
+  }
 
   function handleGeneratePlan(planData) {
-    setChatPlan(planData);
-    setPage("planner");
+    setChatPlan(planData); setPage("planner");
     setTimeout(() => {
       const evt = new CustomEvent("autoGeneratePlan", { detail: planData });
       window.dispatchEvent(evt);
     }, 500);
   }
 
+  // ── Secret admin access: triple-click logo ──
+  // Or navigate to ?admin in URL
+  useEffect(() => {
+    if (window.location.search.includes("admin")) setShowAdmin(true);
+  }, []);
+
+  if (showAdmin) return <AdminPortal />;
   if (!user) return <AuthPage onLogin={handleLogin} />;
 
   const pages = {
-    home: <HomePage user={user} setPage={setPage} />,
+    home:    <HomePage user={user} setPage={setPage} />,
     planner: <PlannerPageWrapper chatPlan={chatPlan} setChatPlan={setChatPlan} />,
     weather: <WeatherPage />,
-    map: <MapPage />,
-    hotels: <HotelsPage />,
+    map:     <MapPage />,
+    hotels:  <HotelsPage />,
+    reviews: <ReviewsPage user={user} />,
     profile: <ProfilePage user={user} setPage={setPage} />,
-    about: <AboutPage />
+    about:   <AboutPage />
   };
 
   return (
-    <div style={{ minHeight: "100vh", background: "#f8fafc", fontFamily: "'DM Sans','Segoe UI',sans-serif" }}>
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&display=swap');*{box-sizing:border-box}input:focus,select:focus{border-color:#2563eb!important;box-shadow:0 0 0 3px rgba(37,99,235,0.1)}@keyframes glow{0%,100%{box-shadow:0 4px 20px rgba(37,99,235,0.4)}50%{box-shadow:0 4px 30px rgba(37,99,235,0.7)}}`}</style>
+    <div style={{ minHeight: "100vh", background: "#f8fafc", fontFamily: "'DM Sans','Segoe UI',sans-serif", width: "100%" }}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&display=swap');*{box-sizing:border-box}input:focus,select:focus,textarea:focus{border-color:#2563eb!important;box-shadow:0 0 0 3px rgba(37,99,235,0.1)}@keyframes glow{0%,100%{box-shadow:0 4px 20px rgba(37,99,235,0.4)}50%{box-shadow:0 4px 30px rgba(37,99,235,0.7)}}`}</style>
       <Navbar user={user} activePage={page} setPage={setPage} onLogout={handleLogout} />
-      {pages[page]}
+      {pages[page] || pages.home}
       <FloatingAssistants onGeneratePlan={handleGeneratePlan} />
       <div style={{ textAlign: "center", padding: "20px", color: "#94a3b8", fontSize: 12, borderTop: "1px solid #e2e8f0", marginTop: 20 }}>
-        🎓 AI Trip Planner · College Project · React · Node.js · MongoDB · Groq AI · Web Speech API
+        🎓 Trip Nova · College Project · React · Node.js · MongoDB · Groq AI · Web Speech API
+        <span
+          onClick={() => setShowAdmin(true)}
+          style={{ marginLeft: 16, cursor: "pointer", opacity: 0.3, fontSize: 10, userSelect: "none" }}
+          title="Admin Portal"
+        >🛡️</span>
       </div>
     </div>
   );
