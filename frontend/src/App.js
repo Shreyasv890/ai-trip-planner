@@ -2570,8 +2570,8 @@ function HomePage({ user, setPage }) {
 // ══════════════════════════════════════════════════════════════════
 
 // Admin credentials — change these before deploying
-const ADMIN_EMAIL = "admin@tripnova.com";
-const ADMIN_PASS  = "TripNova@Admin2024";
+const ADMIN_EMAIL = "a@gmail.com";
+const ADMIN_PASS  = "ABCD";
 
 // ── SHARED REVIEWS STORAGE ──
 // Reviews are stored in localStorage under "tripnova_reviews"
