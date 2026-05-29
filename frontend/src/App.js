@@ -1407,7 +1407,7 @@ function AuthPage({ onLogin }) {
     if (!loginForm.email || !loginForm.password) { setError("Please fill all fields."); return; }
     setLoading(true); setError("");
     try {
-      const res = await fetch(`${API}/auth/login`, {
+      const res = await fetch(`${API}/api/auth/login`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: loginForm.email, password: loginForm.password })
       });
@@ -1425,7 +1425,7 @@ function AuthPage({ onLogin }) {
     if (signupForm.password !== signupForm.confirm) { setError("Passwords do not match."); return; }
     setLoading(true); setError("");
     try {
-      const res = await fetch(`${API}/auth/signup`, {
+      const res = await fetch(`${API}/api/auth/signup`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: signupForm.name, email: signupForm.email, password: signupForm.password })
       });
