@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 
 const API = "https://ai-trip-backend-oxo5.onrender.com";
 
+
 async function callGroq(prompt) {
   const res = await fetch(`${API}/auth/generate`, {
     method: "POST",
@@ -2013,10 +2014,12 @@ function TripResult({ result: r, onBack, fromProfile = false, onStartTrip }) {
       </div>
 
       {/* Tabs */}
-      <div style={{ background: "#fff", borderBottom: "1px solid #e2e8f0", display: "flex", overflowX: "auto" }}>
+      <div style={{ background: "#fff", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "center", overflowX: "auto" }}>
+        <div style={{ display: "flex", justifyContent: "center" }}>
         {tabs.map(t => (
-          <button key={t.id} onClick={() => setActiveTab(t.id)} style={{ padding: "13px 14px", border: "none", borderBottom: `3px solid ${activeTab === t.id ? "#2563eb" : "transparent"}`, background: "none", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit", color: activeTab === t.id ? "#2563eb" : "#64748b", whiteSpace: "nowrap" }}>{t.label}</button>
+          <button key={t.id} onClick={() => setActiveTab(t.id)} style={{ padding: "13px 18px", border: "none", borderBottom: `3px solid ${activeTab === t.id ? "#2563eb" : "transparent"}`, background: "none", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit", color: activeTab === t.id ? "#2563eb" : "#64748b", whiteSpace: "nowrap" }}>{t.label}</button>
         ))}
+        </div>
       </div>
 
       <div style={{ maxWidth: 1000, margin: "0 auto", padding: "16px 20px 40px" }}>
@@ -2859,7 +2862,7 @@ function AdminLogin({ onAdminLogin }) {
         {error && <div style={{ background: "#fef2f2", border: "1.5px solid #fecaca", borderRadius: 10, padding: "10px 14px", color: "#dc2626", fontWeight: 600, fontSize: 13, marginBottom: 16 }}>⚠️ {error}</div>}
         <div style={{ marginBottom: 14 }}>
           <Lbl>ADMIN EMAIL</Lbl>
-          <input type="email" placeholder="admin" value={email}
+          <input type="email" placeholder="admin@tripnova.com" value={email}
             onChange={e => setEmail(e.target.value)}
             onKeyDown={e => e.key === "Enter" && handleLogin()}
             style={inp({ padding: "13px 16px", fontSize: 14, borderRadius: 12 })} />
